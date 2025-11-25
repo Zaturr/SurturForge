@@ -43,7 +43,7 @@ func printError(text string) {
 }
 
 func printInfo(text string) {
-	fmt.Printf("%sℹ %s%s\n", colorCyan, text, colorReset)
+	fmt.Printf("%s %s%s\n", colorCyan, text, colorReset)
 }
 
 func formatBytes(bytes uint64) string {
@@ -62,65 +62,165 @@ func formatBytes(bytes uint64) string {
 func displaySystemInfo() {
 	printHeader("INFORMACIÓN DEL SISTEMA")
 
+	// Información de CPU
+	printSection("Procesador (CPU)")
 	if info, err := cpu.GetCPUInfo(); err == nil {
 		fmt.Println(info)
+		fmt.Println("   Explicación:")
+		fmt.Println("    • Modelo: Nombre del procesador según el fabricante")
+		fmt.Println("    • Cores Físicos: Núcleos reales del procesador (rendimiento base)")
+		fmt.Println("    • Cores Lógicos: Cores físicos × threads por core (Hyper-Threading/SMT)")
+		fmt.Println("    • Frecuencia: Velocidad del reloj (MHz) - mayor = más rápido")
+		fmt.Println("    • Cache: Memoria rápida integrada en el CPU (reduce latencia)")
+	} else {
+		printError(fmt.Sprintf("Error obteniendo info CPU: %v", err))
 	}
 
 	if metrics, err := cpu.GetCPUMetrics(); err == nil {
-		fmt.Printf("CPU: %.1f%% | Cores: %d/%d\n", metrics.UsagePercent, metrics.Cores, metrics.Threads)
+		fmt.Printf("\n%sEstado Actual del CPU:%s\n", colorBold, colorReset)
+		fmt.Printf("  Uso: %.1f%% | Cores Físicos: %d | Threads: %d\n",
+			metrics.UsagePercent, metrics.Cores, metrics.Threads)
+		if metrics.ClockSpeed > 0 {
+			fmt.Printf("  Frecuencia: %.2f MHz\n", metrics.ClockSpeed)
+		}
+		if metrics.Temperature > 0 {
+			fmt.Printf("  Temperatura: %.1f°C\n", metrics.Temperature)
+		}
+		fmt.Println("   Uso del CPU: Porcentaje de capacidad utilizada (0-100%)")
+		fmt.Println("    • <30%: Sistema inactivo")
+		fmt.Println("    • 30-70%: Uso normal")
+		fmt.Println("    • >70%: Sistema bajo carga")
 	}
 
+	// Información de Disco
+	printSection("Almacenamiento (Disco)")
 	if info, err := disk.GetDiskInfo(); err == nil {
 		fmt.Println(info)
+		fmt.Println("   Explicación:")
+		fmt.Println("    • Tamaño Total: Capacidad total del dispositivo")
+		fmt.Println("    • Espacio Usado: Cantidad de datos almacenados")
+		fmt.Println("    • Espacio Libre: Espacio disponible para nuevos datos")
+		fmt.Println("    • Uso: Porcentaje del disco ocupado")
+		fmt.Println("    • Inodos: Estructuras de metadatos del sistema de archivos")
+		fmt.Println("      (Linux/Unix: límite de archivos que se pueden crear)")
+	} else {
+		printError(fmt.Sprintf("Error obteniendo info Disco: %v", err))
 	}
 
-	fmt.Printf("Go: %s | OS: %s | CPUs: %d\n", runtime.Version(), runtime.GOOS, runtime.NumCPU())
+	// Información del Entorno
+	printSection("Entorno de Ejecución")
+	fmt.Printf("Lenguaje: Go %s\n", runtime.Version())
+	fmt.Printf("Sistema Operativo: %s\n", runtime.GOOS)
+	fmt.Printf("CPUs Disponibles: %d\n", runtime.NumCPU())
+	fmt.Println("   Explicación:")
+	fmt.Println("    • Go Version: Versión del compilador Go (afecta rendimiento)")
+	fmt.Println("    • OS: Sistema operativo (Windows/Linux/macOS)")
+	fmt.Println("    • CPUs: Número de CPUs que Go puede usar para paralelismo")
 }
 
 func displayBaseline() {
 	printHeader("BASELINE DEL SISTEMA")
+	fmt.Println("El baseline establece el estado inicial del sistema para comparar")
+	fmt.Println("el rendimiento durante los benchmarks y detectar anomalías.")
+	fmt.Println()
 
 	if err := baseline.SetEnvironmentVariables(); err != nil {
-		printError(fmt.Sprintf("Error variables: %v", err))
+		printError(fmt.Sprintf("Error estableciendo variables de entorno: %v", err))
 	}
 
 	result, err := baseline.RunBaseline()
 	if err != nil {
-		printError(fmt.Sprintf("Error: %v", err))
+		printError(fmt.Sprintf("Error ejecutando baseline: %v", err))
 		return
 	}
 
-	fmt.Printf("CPU Idle: %.1f%% | RAM: %s | Disco: %s\n",
-		result.Baseline.CPUIdlePercent,
-		baseline.FormatBytes(result.Baseline.MemoryAvailable),
-		baseline.FormatBytes(result.Baseline.DiskFree))
+	// Hardware detectado
+	printSection("Hardware Detectado")
+	fmt.Printf("Cores Físicos: %d | Cores Lógicos: %d\n",
+		result.Hardware.CPUCoresPhysical, result.Hardware.CPUCoresLogical)
+	fmt.Printf("RAM Total: %s\n", baseline.FormatBytes(result.Hardware.RAMTotal))
+	fmt.Printf("Disco Total: %s | Disco Libre: %s\n",
+		baseline.FormatBytes(result.Hardware.DiskTotal),
+		baseline.FormatBytes(result.Hardware.DiskFree))
+	if len(result.Hardware.NetworkInterfaces) > 0 {
+		fmt.Printf("Interfaces de Red: %d\n", len(result.Hardware.NetworkInterfaces))
+	}
+	fmt.Println("   Hardware: Especificaciones físicas del sistema")
+	fmt.Println("    • Cores Físicos: Núcleos reales del procesador")
+	fmt.Println("    • Cores Lógicos: Incluye Hyper-Threading/SMT (mejor paralelismo)")
+	fmt.Println("    • RAM Total: Memoria principal disponible")
+	fmt.Println("    • Disco: Capacidad de almacenamiento permanente")
 
-	// Procesos de alto consumo
+	// Baseline del sistema
+	printSection("Estado Inicial del Sistema (Baseline)")
+	fmt.Printf("CPU Idle: %.1f%%\n", result.Baseline.CPUIdlePercent)
+	fmt.Printf("Memoria Libre: %s | Disponible: %s\n",
+		baseline.FormatBytes(result.Baseline.MemoryFree),
+		baseline.FormatBytes(result.Baseline.MemoryAvailable))
+	fmt.Printf("Disco Libre: %s\n", baseline.FormatBytes(result.Baseline.DiskFree))
+	if result.Baseline.NetworkLatency > 0 {
+		fmt.Printf("Latencia de Red Base: %v\n", result.Baseline.NetworkLatency)
+	}
+	fmt.Println("   Baseline: Estado del sistema antes de los tests")
+	fmt.Println("    • CPU Idle: Porcentaje de CPU sin uso (mayor = sistema más libre)")
+	fmt.Println("    • Memoria Libre: RAM no utilizada")
+	fmt.Println("    • Memoria Disponible: RAM que puede usarse (incluye caché liberable)")
+	fmt.Println("    • Disco Libre: Espacio disponible para operaciones de I/O")
+	fmt.Println("    • Latencia de Red: Tiempo de respuesta de red base")
+
+	// Entorno
+	printSection("Configuración del Entorno")
+	fmt.Printf("Sistema: %s %s | Go: %s\n",
+		result.Environment.OS,
+		result.Environment.Architecture,
+		result.Environment.GoVersion)
+	fmt.Printf("Procesos Activos: %d\n", result.Environment.ProcessCount)
+	fmt.Println("   Entorno: Configuración del sistema operativo y runtime")
+	fmt.Println("    • OS/Arquitectura: Plataforma de ejecución")
+	fmt.Println("    • Go Version: Versión del runtime Go")
+	fmt.Println("    • Procesos: Número de procesos en ejecución")
+
+	// Procesos de alto consumo de CPU
 	if len(result.Environment.HighCPUProcesses) > 0 {
 		sort.Slice(result.Environment.HighCPUProcesses, func(i, j int) bool {
 			return result.Environment.HighCPUProcesses[i].CPUPercent > result.Environment.HighCPUProcesses[j].CPUPercent
 		})
-		fmt.Printf("\n%sProcesos CPU (>5%%):%s\n", colorYellow, colorReset)
+		fmt.Printf("\n%sProcesos con Alto Uso de CPU (>5%%):%s\n", colorYellow, colorReset)
+		fmt.Println("   Estos procesos pueden afectar el rendimiento de los benchmarks")
 		for i, p := range result.Environment.HighCPUProcesses {
 			if i >= 10 {
 				break
 			}
-			fmt.Printf("  %s (PID: %d) - %.1f%%\n", p.Name, p.PID, p.CPUPercent)
+			fmt.Printf("  • %s (PID: %d) - %.1f%% CPU\n", p.Name, p.PID, p.CPUPercent)
 		}
 	}
 
+	// Procesos de alto consumo de memoria
 	if len(result.Environment.HighMemoryProcesses) > 0 {
 		sort.Slice(result.Environment.HighMemoryProcesses, func(i, j int) bool {
 			return result.Environment.HighMemoryProcesses[i].MemoryMB > result.Environment.HighMemoryProcesses[j].MemoryMB
 		})
-		fmt.Printf("\n%sProcesos Memoria (>100MB):%s\n", colorYellow, colorReset)
+		fmt.Printf("\n%sProcesos con Alto Uso de Memoria (>100MB):%s\n", colorYellow, colorReset)
+		fmt.Println("   Estos procesos consumen memoria que podría estar disponible")
 		for i, p := range result.Environment.HighMemoryProcesses {
 			if i >= 10 {
 				break
 			}
-			fmt.Printf("  %s (PID: %d) - %.1f MB\n", p.Name, p.PID, p.MemoryMB)
+			fmt.Printf("  • %s (PID: %d) - %.1f MB\n", p.Name, p.PID, p.MemoryMB)
 		}
 	}
+
+	// Recomendaciones
+	if len(result.Environment.Recommendations) > 0 {
+		fmt.Printf("\n%sRecomendaciones:%s\n", colorCyan, colorReset)
+		for _, rec := range result.Environment.Recommendations {
+			fmt.Printf("  • %s\n", rec)
+		}
+	}
+
+	fmt.Printf("\n%sNota:%s Compara estos valores con los resultados de los benchmarks\n",
+		colorCyan, colorReset)
+	fmt.Println("       para detectar degradación del rendimiento del sistema.")
 }
 
 type CPUStats struct {
@@ -517,6 +617,24 @@ func handleCPUMenu() {
 }
 
 func handleDiskMenu() {
+	fmt.Println("\n1. Test de Estrés (SQLite)")
+	fmt.Println("2. Benchmark de Archivos (Nuevo)")
+	fmt.Print("Opción: ")
+
+	var choice string
+	fmt.Scanln(&choice)
+
+	switch choice {
+	case "1":
+		handleDiskStressMenu()
+	case "2":
+		handleDiskBenchmarkMenu()
+	default:
+		printError("Opción inválida")
+	}
+}
+
+func handleDiskStressMenu() {
 	fmt.Println("\n1. Configuración por defecto")
 	fmt.Println("2. Configuración personalizada")
 	fmt.Print("Opción: ")
@@ -545,6 +663,230 @@ func handleDiskMenu() {
 		return
 	}
 	displayDiskStressResult(result)
+}
+
+func handleDiskBenchmarkMenu() {
+	fmt.Println("\n=== Benchmark de Disco Basado en Archivos ===")
+	fmt.Println("Este benchmark fuerza el disco físico mediante escritura y lectura continua")
+	fmt.Println()
+
+	// Crear directorio temporal
+	tempDir := filepath.Join(os.TempDir(), "disk_benchmark")
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		printError(fmt.Sprintf("Error creando directorio temporal: %v", err))
+		return
+	}
+	defer os.RemoveAll(tempDir) // Limpiar al finalizar
+
+	// Solicitar tamaño del test
+	fmt.Print("Tamaño total de archivos en GiB (1.0): ")
+	var sizeInput string
+	fmt.Scanln(&sizeInput)
+	aggregateSizeGiB := 1.0
+	if sizeInput != "" {
+		if val, err := strconv.ParseFloat(sizeInput, 64); err == nil && val > 0 {
+			aggregateSizeGiB = val
+		}
+	}
+
+	// Crear instancia del benchmark
+	bm := disk.NewMark(tempDir, aggregateSizeGiB)
+
+	// Configurar directorio temporal
+	if err := bm.SetTempDir(tempDir); err != nil {
+		printError(fmt.Sprintf("Error configurando directorio: %v", err))
+		return
+	}
+
+	// Asegurar limpieza de archivos incluso si hay errores
+	defer func() {
+		if err := bm.CleanupTestFiles(); err != nil {
+			printError(fmt.Sprintf("Error limpiando archivos de test: %v", err))
+		} else {
+			// Verificar que se eliminaron correctamente
+			if count, err := bm.VerifyCleanup(); err == nil {
+				if count == 0 {
+					printInfo("✓ Archivos de test eliminados correctamente")
+				} else {
+					printError(fmt.Sprintf("Advertencia: %d archivos aún existen después de limpieza", count))
+				}
+			}
+		}
+	}()
+
+	// Generar bloque aleatorio de 64 KB
+	printInfo("Generando datos aleatorios...")
+	if err := bm.CreateRandomBlock(); err != nil {
+		printError(fmt.Sprintf("Error generando bloque aleatorio: %v", err))
+		return
+	}
+
+	// Iniciar limpieza continua de cache (en goroutine)
+	bm.ClearBufferCacheEveryThreeSeconds()
+	defer bm.StopCacheClear() // Detener al finalizar
+
+	// Ejecutar ciclo completo de tests
+	printInfo("Ejecutando test de escritura secuencial...")
+	if err := bm.RunSequentialWriteTest(); err != nil {
+		printError(fmt.Sprintf("Error en test de escritura: %v", err))
+		return
+	}
+
+	printInfo("Ejecutando test de lectura secuencial...")
+	if err := bm.RunSequentialReadTest(); err != nil {
+		printError(fmt.Sprintf("Error en test de lectura: %v", err))
+		return
+	}
+
+	printInfo("Ejecutando test de IOPS...")
+	if err := bm.RunIOPSTest(); err != nil {
+		printError(fmt.Sprintf("Error en test de IOPS: %v", err))
+		return
+	}
+
+	printInfo("Ejecutando test de eliminación...")
+	if err := bm.RunDeleteTest(); err != nil {
+		printError(fmt.Sprintf("Error en test de eliminación: %v", err))
+		// No retornar, continuar para mostrar resultados
+	}
+
+	// Mostrar resultados
+	displayDiskBenchmarkResult(bm)
+
+	// La limpieza se hace automáticamente con defer, pero también la hacemos aquí explícitamente
+	// para tener feedback inmediato
+	if err := bm.CleanupTestFiles(); err != nil {
+		printError(fmt.Sprintf("Advertencia: error limpiando archivos: %v", err))
+	} else {
+		// Verificar que se eliminaron
+		if count, err := bm.VerifyCleanup(); err == nil && count == 0 {
+			printInfo("✓ Archivos de test eliminados correctamente")
+		}
+	}
+}
+
+func displayDiskBenchmarkResult(bm *disk.Mark) {
+	result := bm.GetLastResult()
+	if result == nil {
+		printError("No hay resultados para mostrar")
+		return
+	}
+
+	printHeader("RESULTADOS BENCHMARK DE DISCO")
+
+	if result.WrittenBytes > 0 {
+		fmt.Printf("%sEscritura Secuencial:%s\n", colorBold, colorReset)
+		fmt.Printf("  Bytes escritos: %s\n", formatBytes(uint64(result.WrittenBytes)))
+		fmt.Printf("  Duración: %v\n", result.WrittenDuration)
+		fmt.Printf("  Rendimiento: %s%.2f MB/s%s\n", colorGreen, result.WriteThroughputMBs, colorReset)
+		if result.WriteLatency > 0 {
+			fmt.Printf("  Latencia promedio: %s%v%s\n", colorCyan, result.WriteLatency, colorReset)
+		}
+		fmt.Println()
+	}
+
+	if result.ReadBytes > 0 {
+		fmt.Printf("%sLectura Secuencial:%s\n", colorBold, colorReset)
+		fmt.Printf("  Bytes leídos: %s\n", formatBytes(uint64(result.ReadBytes)))
+		fmt.Printf("  Duración: %v\n", result.ReadDuration)
+		fmt.Printf("  Rendimiento: %s%.2f MB/s%s\n", colorGreen, result.ReadThroughputMBs, colorReset)
+		if result.ReadLatency > 0 {
+			fmt.Printf("  Latencia promedio: %s%v%s\n", colorCyan, result.ReadLatency, colorReset)
+		}
+		fmt.Println()
+	}
+
+	if result.SustainedThroughputMBs > 0 {
+		fmt.Printf("%sTasa de Transferencia Sostenida:%s\n", colorBold, colorReset)
+		fmt.Printf("  Throughput promedio: %s%.2f MB/s%s\n", colorGreen, result.SustainedThroughputMBs, colorReset)
+		fmt.Println()
+	}
+
+	if result.IOOperations > 0 {
+		iops := float64(result.IOOperations) / result.IODuration.Seconds()
+		fmt.Printf("%sIOPS (Operaciones Aleatorias):%s\n", colorBold, colorReset)
+		fmt.Printf("  Operaciones: %d\n", result.IOOperations)
+		fmt.Printf("  Duración: %v\n", result.IODuration)
+		fmt.Printf("  IOPS: %s%.0f%s\n", colorGreen, iops, colorReset)
+		if result.IOPSLatency > 0 {
+			fmt.Printf("  Latencia promedio: %s%v%s\n", colorCyan, result.IOPSLatency, colorReset)
+		}
+		fmt.Println()
+	}
+
+	if result.DeletedFiles > 0 {
+		deleteRate := float64(result.DeletedFiles) / result.DeleteDuration.Seconds()
+		fmt.Printf("%sEliminación de Archivos:%s\n", colorBold, colorReset)
+		fmt.Printf("  Archivos eliminados: %d\n", result.DeletedFiles)
+		fmt.Printf("  Duración: %v\n", result.DeleteDuration)
+		fmt.Printf("  Velocidad: %s%.0f archivos/s%s\n", colorGreen, deleteRate, colorReset)
+		fmt.Println()
+	}
+
+	// Métricas de Consistencia y Estabilidad
+	if result.ConsistencyScore > 0 || result.StabilityScore > 0 {
+		fmt.Printf("%sConsistencia y Estabilidad:%s\n", colorBold, colorReset)
+		if result.ConsistencyScore > 0 {
+			consistencyColor := colorGreen
+			if result.ConsistencyScore < 70 {
+				consistencyColor = colorYellow
+			}
+			if result.ConsistencyScore < 50 {
+				consistencyColor = colorRed
+			}
+			fmt.Printf("  Consistencia: %s%.1f/100%s (menor variación = mejor)\n",
+				consistencyColor, result.ConsistencyScore, colorReset)
+		}
+		if result.StabilityScore > 0 {
+			stabilityColor := colorGreen
+			if result.StabilityScore < 70 {
+				stabilityColor = colorYellow
+			}
+			if result.StabilityScore < 50 {
+				stabilityColor = colorRed
+			}
+			fmt.Printf("  Estabilidad: %s%.1f/100%s (menor cambio entre ciclos = mejor)\n",
+				stabilityColor, result.StabilityScore, colorReset)
+		}
+		fmt.Println()
+	}
+
+	// Overhead de CPU
+	if result.CPUOverheadPercent > 0 || result.CPUAverageUsage > 0 {
+		fmt.Printf("%sOverhead de CPU:%s\n", colorBold, colorReset)
+		if result.CPUIdleBefore > 0 {
+			fmt.Printf("  CPU Idle antes: %.1f%%\n", result.CPUIdleBefore)
+		}
+		if result.CPUAverageUsage > 0 {
+			fmt.Printf("  CPU promedio durante test: %.1f%%\n", result.CPUAverageUsage)
+		}
+		if result.CPUPeakUsage > 0 {
+			fmt.Printf("  CPU pico: %.1f%%\n", result.CPUPeakUsage)
+		}
+		if result.CPUOverheadPercent > 0 {
+			overheadColor := colorGreen
+			if result.CPUOverheadPercent > 30 {
+				overheadColor = colorYellow
+			}
+			if result.CPUOverheadPercent > 50 {
+				overheadColor = colorRed
+			}
+			fmt.Printf("  Overhead: %s%.1f%%%s (diferencia CPU idle antes vs durante)\n",
+				overheadColor, result.CPUOverheadPercent, colorReset)
+		}
+		fmt.Println()
+	}
+
+	// Resumen comparativo
+	if result.WrittenBytes > 0 && result.ReadBytes > 0 {
+		fmt.Printf("%sResumen:%s\n", colorBold, colorReset)
+		if result.SustainedThroughputMBs > 0 {
+			fmt.Printf("  Throughput sostenido: %s%.2f MB/s%s\n", colorCyan, result.SustainedThroughputMBs, colorReset)
+		}
+		if result.DeletedFiles > 0 {
+			fmt.Printf("  Archivos eliminados: %d (para liberar espacio en disco)\n", result.DeletedFiles)
+		}
+	}
 }
 
 func main() {
