@@ -551,45 +551,51 @@ func (bm *Mark) singleThreadIOPSTest(filename string, numOpsChannel chan<- Threa
 	numOpsChannel <- ThreadResult{Result: numOperations, Error: nil}
 }
 
-// CleanupTestFiles elimina todos los archivos de test
+// CleanupTestFiles elimina TODOS los archivos en el directorio temporal
+// Esto asegura que no quede nada, incluso si hay archivos con nombres inesperados
 func (bm *Mark) CleanupTestFiles() error {
+	if bm.TempDir == "" {
+		return nil
+	}
+
 	var errors []string
 	deletedCount := 0
+	totalSizeDeleted := int64(0)
 
-	for i := 0; i < bm.NumReadersWriters; i++ {
-		filename := filepath.Join(bm.TempDir, fmt.Sprintf("%s%d", bm.randomString, i))
-		if err := os.RemoveAll(filename); err != nil && !os.IsNotExist(err) {
-			errors = append(errors, fmt.Sprintf("%s: %v", filename, err))
+	// Leer todos los archivos en el directorio
+	entries, err := os.ReadDir(bm.TempDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // Directorio no existe, nada que limpiar
+		}
+		return fmt.Errorf("error leyendo directorio %s: %w", bm.TempDir, err)
+	}
+
+	// Eliminar TODOS los archivos y subdirectorios
+	for _, entry := range entries {
+		fullPath := filepath.Join(bm.TempDir, entry.Name())
+
+		// Obtener tamaño antes de eliminar (para reporte)
+		if info, err := entry.Info(); err == nil {
+			if !entry.IsDir() {
+				totalSizeDeleted += info.Size()
+			}
+		}
+
+		// Eliminar archivo o directorio
+		if err := os.RemoveAll(fullPath); err != nil && !os.IsNotExist(err) {
+			errors = append(errors, fmt.Sprintf("%s: %v", fullPath, err))
 		} else {
 			deletedCount++
 		}
 	}
 
-	// También eliminar archivos de delete test si existen
-	if bm.randomString != "" {
-		entries, err := os.ReadDir(bm.TempDir)
-		if err == nil {
-			for _, entry := range entries {
-				if !entry.IsDir() && len(entry.Name()) > len(bm.randomString) {
-					// Verificar si es un archivo de delete test
-					if len(entry.Name()) > len(bm.randomString)+7 &&
-						entry.Name()[:len(bm.randomString)] == bm.randomString &&
-						entry.Name()[len(bm.randomString):len(bm.randomString)+7] == "_delete_" {
-						filename := filepath.Join(bm.TempDir, entry.Name())
-						if err := os.Remove(filename); err != nil && !os.IsNotExist(err) {
-							errors = append(errors, fmt.Sprintf("%s: %v", filename, err))
-						} else {
-							deletedCount++
-						}
-					}
-				}
-			}
-		}
-	}
+	// Intentar eliminar el directorio mismo (por si acaso)
+	os.Remove(bm.TempDir)
 
 	if len(errors) > 0 {
-		return fmt.Errorf("errores eliminando archivos (%d eliminados, %d errores): %v",
-			deletedCount, len(errors), errors)
+		return fmt.Errorf("errores eliminando archivos (%d eliminados, %d errores, %s liberados): %v",
+			deletedCount, len(errors), formatBytes(uint64(totalSizeDeleted)), errors)
 	}
 
 	return nil
@@ -962,4 +968,128 @@ func (bm *Mark) PrintResults() {
 		}
 	}
 	fmt.Println("==========================================")
+}
+
+// DisplayDiskBenchmarkResult muestra los resultados del benchmark de disco con formato mejorado
+func DisplayDiskBenchmarkResult(result *Result, formatBytes func(uint64) string, colorBold, colorReset, colorGreen, colorCyan, colorYellow, colorRed string, printHeader, printError func(string)) {
+	if result == nil {
+		printError("No hay resultados para mostrar")
+		return
+	}
+
+	printHeader("RESULTADOS BENCHMARK DE DISCO")
+
+	if result.WrittenBytes > 0 {
+		fmt.Printf("%sEscritura Secuencial:%s\n", colorBold, colorReset)
+		fmt.Printf("  Bytes escritos: %s\n", formatBytes(uint64(result.WrittenBytes)))
+		fmt.Printf("  Duración: %v\n", result.WrittenDuration)
+		fmt.Printf("  Rendimiento: %s%.2f MB/s%s\n", colorGreen, result.WriteThroughputMBs, colorReset)
+		if result.WriteLatency > 0 {
+			fmt.Printf("  Latencia promedio: %s%v%s\n", colorCyan, result.WriteLatency, colorReset)
+		}
+		fmt.Println()
+	}
+
+	if result.ReadBytes > 0 {
+		fmt.Printf("%sLectura Secuencial:%s\n", colorBold, colorReset)
+		fmt.Printf("  Bytes leídos: %s\n", formatBytes(uint64(result.ReadBytes)))
+		fmt.Printf("  Duración: %v\n", result.ReadDuration)
+		fmt.Printf("  Rendimiento: %s%.2f MB/s%s\n", colorGreen, result.ReadThroughputMBs, colorReset)
+		if result.ReadLatency > 0 {
+			fmt.Printf("  Latencia promedio: %s%v%s\n", colorCyan, result.ReadLatency, colorReset)
+		}
+		fmt.Println()
+	}
+
+	if result.SustainedThroughputMBs > 0 {
+		fmt.Printf("%sTasa de Transferencia Sostenida:%s\n", colorBold, colorReset)
+		fmt.Printf("  Throughput promedio: %s%.2f MB/s%s\n", colorGreen, result.SustainedThroughputMBs, colorReset)
+		fmt.Println()
+	}
+
+	if result.IOOperations > 0 {
+		iops := float64(result.IOOperations) / result.IODuration.Seconds()
+		fmt.Printf("%sIOPS (Operaciones Aleatorias):%s\n", colorBold, colorReset)
+		fmt.Printf("  Operaciones: %d\n", result.IOOperations)
+		fmt.Printf("  Duración: %v\n", result.IODuration)
+		fmt.Printf("  IOPS: %s%.0f%s\n", colorGreen, iops, colorReset)
+		if result.IOPSLatency > 0 {
+			fmt.Printf("  Latencia promedio: %s%v%s\n", colorCyan, result.IOPSLatency, colorReset)
+		}
+		fmt.Println()
+	}
+
+	if result.DeletedFiles > 0 {
+		deleteRate := float64(result.DeletedFiles) / result.DeleteDuration.Seconds()
+		fmt.Printf("%sEliminación de Archivos:%s\n", colorBold, colorReset)
+		fmt.Printf("  Archivos eliminados: %d\n", result.DeletedFiles)
+		fmt.Printf("  Duración: %v\n", result.DeleteDuration)
+		fmt.Printf("  Velocidad: %s%.0f archivos/s%s\n", colorGreen, deleteRate, colorReset)
+		fmt.Println()
+	}
+
+	// Métricas de Consistencia y Estabilidad
+	if result.ConsistencyScore > 0 || result.StabilityScore > 0 {
+		fmt.Printf("%sConsistencia y Estabilidad:%s\n", colorBold, colorReset)
+		if result.ConsistencyScore > 0 {
+			consistencyColor := colorGreen
+			if result.ConsistencyScore < 70 {
+				consistencyColor = colorYellow
+			}
+			if result.ConsistencyScore < 50 {
+				consistencyColor = colorRed
+			}
+			fmt.Printf("  Consistencia: %s%.1f/100%s (menor variación = mejor)\n",
+				consistencyColor, result.ConsistencyScore, colorReset)
+		}
+		if result.StabilityScore > 0 {
+			stabilityColor := colorGreen
+			if result.StabilityScore < 70 {
+				stabilityColor = colorYellow
+			}
+			if result.StabilityScore < 50 {
+				stabilityColor = colorRed
+			}
+			fmt.Printf("  Estabilidad: %s%.1f/100%s (menor cambio entre ciclos = mejor)\n",
+				stabilityColor, result.StabilityScore, colorReset)
+		}
+		fmt.Println()
+	}
+
+	// Overhead de CPU
+	if result.CPUOverheadPercent > 0 || result.CPUAverageUsage > 0 {
+		fmt.Printf("%sOverhead de CPU:%s\n", colorBold, colorReset)
+		if result.CPUIdleBefore > 0 {
+			fmt.Printf("  CPU Idle antes: %.1f%%\n", result.CPUIdleBefore)
+		}
+		if result.CPUAverageUsage > 0 {
+			fmt.Printf("  CPU promedio durante test: %.1f%%\n", result.CPUAverageUsage)
+		}
+		if result.CPUPeakUsage > 0 {
+			fmt.Printf("  CPU pico: %.1f%%\n", result.CPUPeakUsage)
+		}
+		if result.CPUOverheadPercent > 0 {
+			overheadColor := colorGreen
+			if result.CPUOverheadPercent > 30 {
+				overheadColor = colorYellow
+			}
+			if result.CPUOverheadPercent > 50 {
+				overheadColor = colorRed
+			}
+			fmt.Printf("  Overhead: %s%.1f%%%s (diferencia CPU idle antes vs durante)\n",
+				overheadColor, result.CPUOverheadPercent, colorReset)
+		}
+		fmt.Println()
+	}
+
+	// Resumen comparativo
+	if result.WrittenBytes > 0 && result.ReadBytes > 0 {
+		fmt.Printf("%sResumen:%s\n", colorBold, colorReset)
+		if result.SustainedThroughputMBs > 0 {
+			fmt.Printf("  Throughput sostenido: %s%.2f MB/s%s\n", colorCyan, result.SustainedThroughputMBs, colorReset)
+		}
+		if result.DeletedFiles > 0 {
+			fmt.Printf("  Archivos eliminados: %d (para liberar espacio en disco)\n", result.DeletedFiles)
+		}
+	}
 }
