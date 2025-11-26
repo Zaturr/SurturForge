@@ -21,34 +21,25 @@ const (
 	numBlocks = 16
 )
 
-// BenchmarkSHA256SingleCore ejecuta una prueba de hashing SHA-256 en un solo núcleo.
-// Pre-asigna un buffer de 16 MB fuera del bucle b.N para evitar medir la asignación
-// de memoria o el garbage collector de Go.
 func BenchmarkSHA256SingleCore(b *testing.B) {
-	// Pre-asignar el buffer de datos fuera del bucle b.N
-	// Esto asegura que no medimos la asignación de memoria, solo el procesamiento
 	data := make([]byte, dataSizeBytes)
 	for i := range data {
-		data[i] = byte(i % 256) // Llenar con datos de prueba
+		data[i] = byte(i % 256)
 	}
 
-	// Pre-inicializar el hasher fuera del bucle para evitar overhead
 	hasher := sha256.New()
 
-	b.ResetTimer() // Resetear el timer después de la preparación
-	b.ReportAllocs() // Reportar asignaciones de memoria
+	b.ResetTimer()
+	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		hasher.Reset()
 		hasher.Write(data)
-		_ = hasher.Sum(nil) // Forzar el cálculo del hash
+		_ = hasher.Sum(nil)
 	}
 }
 
-// BenchmarkAES256SingleCore ejecuta una prueba de cifrado AES-256-GCM en un solo núcleo.
-// Pre-asigna buffers y configura el cifrador fuera del bucle b.N.
 func BenchmarkAES256SingleCore(b *testing.B) {
-	// Pre-asignar el buffer de datos fuera del bucle b.N
 	data := make([]byte, dataSizeBytes)
 	for i := range data {
 		data[i] = byte(i % 256)
@@ -232,4 +223,3 @@ func BenchmarkSHA256AndAES256Sequential(b *testing.B) {
 		_ = ciphertext
 	}
 }
-

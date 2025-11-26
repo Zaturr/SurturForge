@@ -22,30 +22,21 @@ import (
 	gopsutildisk "github.com/shirou/gopsutil/v4/disk"
 )
 
-const (
-	colorReset  = "\033[0m"
-	colorRed    = "\033[31m"
-	colorGreen  = "\033[32m"
-	colorYellow = "\033[33m"
-	colorCyan   = "\033[36m"
-	colorBold   = "\033[1m"
-)
-
 func printHeader(text string) {
-	fmt.Printf("\n%s%s%s\n", colorBold+colorCyan, text, colorReset)
+	fmt.Printf("\n%s\n", text)
 	fmt.Println(strings.Repeat("=", 60))
 }
 
 func printSection(text string) {
-	fmt.Printf("\n%s%s%s\n", colorYellow, text, colorReset)
+	fmt.Printf("\n%s\n", text)
 }
 
 func printError(text string) {
-	fmt.Printf("%s✗ %s%s\n", colorRed, text, colorReset)
+	fmt.Printf("✗ %s\n", text)
 }
 
 func printInfo(text string) {
-	fmt.Printf("%s %s%s\n", colorCyan, text, colorReset)
+	fmt.Printf(" %s\n", text)
 }
 
 func formatBytes(bytes uint64) string {
@@ -79,7 +70,7 @@ func displaySystemInfo() {
 	}
 
 	if metrics, err := cpu.GetCPUMetrics(); err == nil {
-		fmt.Printf("\n%sEstado Actual del CPU:%s\n", colorBold, colorReset)
+		fmt.Printf("\nEstado Actual del CPU:\n")
 		fmt.Printf("  Uso: %.1f%% | Cores Físicos: %d | Threads: %d\n",
 			metrics.UsagePercent, metrics.Cores, metrics.Threads)
 		if metrics.ClockSpeed > 0 {
@@ -187,7 +178,7 @@ func displayBaseline() {
 		sort.Slice(result.Environment.HighCPUProcesses, func(i, j int) bool {
 			return result.Environment.HighCPUProcesses[i].CPUPercent > result.Environment.HighCPUProcesses[j].CPUPercent
 		})
-		fmt.Printf("\n%sProcesos con Alto Uso de CPU (>5%%):%s\n", colorYellow, colorReset)
+		fmt.Printf("\nProcesos con Alto Uso de CPU (>5%%):\n")
 		fmt.Println("   Estos procesos pueden afectar el rendimiento de los benchmarks")
 		for i, p := range result.Environment.HighCPUProcesses {
 			if i >= 10 {
@@ -202,7 +193,7 @@ func displayBaseline() {
 		sort.Slice(result.Environment.HighMemoryProcesses, func(i, j int) bool {
 			return result.Environment.HighMemoryProcesses[i].MemoryMB > result.Environment.HighMemoryProcesses[j].MemoryMB
 		})
-		fmt.Printf("\n%sProcesos con Alto Uso de Memoria (>100MB):%s\n", colorYellow, colorReset)
+		fmt.Printf("\nProcesos con Alto Uso de Memoria (>100MB):\n")
 		fmt.Println("   Estos procesos consumen memoria que podría estar disponible")
 		for i, p := range result.Environment.HighMemoryProcesses {
 			if i >= 10 {
@@ -214,14 +205,13 @@ func displayBaseline() {
 
 	// Recomendaciones
 	if len(result.Environment.Recommendations) > 0 {
-		fmt.Printf("\n%sRecomendaciones:%s\n", colorCyan, colorReset)
+		fmt.Printf("\nRecomendaciones:\n")
 		for _, rec := range result.Environment.Recommendations {
 			fmt.Printf("  • %s\n", rec)
 		}
 	}
 
-	fmt.Printf("\n%sNota:%s Compara estos valores con los resultados de los benchmarks\n",
-		colorCyan, colorReset)
+	fmt.Printf("\nNota: Compara estos valores con los resultados de los benchmarks\n")
 	fmt.Println("       para detectar degradación del rendimiento del sistema.")
 }
 
@@ -258,7 +248,7 @@ func displaySummary(output string, stats *cpu.CPUStats) {
 		return
 	}
 
-	cpu.DisplayReport(report, colorBold, colorReset, colorCyan, colorGreen, colorYellow, colorRed, printHeader, printSection)
+	cpu.DisplayReport(report, printHeader, printSection)
 }
 
 func runRAMStressTest(intensity string) {
@@ -268,7 +258,7 @@ func runRAMStressTest(intensity string) {
 		printError(fmt.Sprintf("Error: %v", err))
 		return
 	}
-	ram.DisplayRAMStressResult(result, colorReset, colorRed, printHeader, printError)
+	ram.DisplayRAMStressResult(result, "", "", printHeader, printError)
 }
 
 func runFullRAMEvaluation() {
@@ -507,7 +497,7 @@ func handleDiskBenchmarkMenu() {
 						formatBytes(diff)))
 				}
 			} else {
-				printError(fmt.Sprintf("⚠ Advertencia: El espacio en disco es menor que antes (diferencia: %s)",
+				printError(fmt.Sprintf("Advertencia: El espacio en disco es menor que antes (diferencia: %s)",
 					formatBytes(diff)))
 				printInfo("   Nota: En Windows, el espacio puede tardar en actualizarse. Verifica manualmente si es necesario.")
 			}
@@ -561,7 +551,7 @@ func handleDiskBenchmarkMenu() {
 	// Mostrar resultados
 	result := bm.GetLastResult()
 	if result != nil {
-		disk.DisplayDiskBenchmarkResult(result, formatBytes, colorBold, colorReset, colorGreen, colorCyan, colorYellow, colorRed, printHeader, printError)
+		disk.DisplayDiskBenchmarkResult(result, formatBytes, "", "", "", "", "", "", printHeader, printError)
 	}
 
 	// La limpieza se hace automáticamente con defer, pero también la hacemos aquí explícitamente

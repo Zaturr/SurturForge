@@ -6,7 +6,6 @@ import (
 	"v2/internal/baseline"
 )
 
-// DisplayRAMStressResult muestra los resultados del test de estrés de RAM
 func DisplayRAMStressResult(result *RAMStressResult, colorReset, colorRed string, printHeader func(string), printError func(string)) {
 	if result == nil {
 		return
@@ -25,6 +24,20 @@ func DisplayRAMStressResult(result *RAMStressResult, colorReset, colorRed string
 		printError("Swap usado durante el test")
 	}
 	fmt.Printf("Estabilidad: %.1f/100 | Duración: %v\n", result.StabilityScore, duration)
+
+	if result.Optimizations != nil {
+		fmt.Println("\nOptimizaciones de Aislamiento:")
+		if result.Optimizations.MemoryLocked {
+			fmt.Println("  ✓ Memoria bloqueada en RAM (mlock)")
+		} else if result.Config.EnableMemoryLock {
+			fmt.Printf("  ✗ Memoria no bloqueada: %s\n", result.Optimizations.MemoryLockError)
+		}
+		if result.Optimizations.HighPriority {
+			fmt.Println("  ✓ Prioridad alta aplicada")
+		} else if result.Config.EnableHighPriority {
+			fmt.Printf("  ✗ Prioridad alta no aplicada: %s\n", result.Optimizations.PriorityError)
+		}
+	}
 }
 
 func DisplayFullRAMEvaluation(evaluation *FullRAMEvaluationResult, printHeader func(string)) {
@@ -55,7 +68,6 @@ func DisplayFullRAMEvaluation(evaluation *FullRAMEvaluationResult, printHeader f
 	}
 }
 
-// RunFullRAMEvaluationWithDisplay ejecuta una evaluación completa y muestra los resultados
 func RunFullRAMEvaluationWithDisplay(baselineResult *baseline.BaselineResult, printHeader, printInfo, printError func(string)) error {
 	printHeader("EVALUACIÓN RAM")
 	printInfo("Ejecutando...")
