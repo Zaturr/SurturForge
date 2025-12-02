@@ -13,7 +13,6 @@ import (
 	"github.com/shirou/gopsutil/v4/sensors"
 )
 
-// getCurrentClockSpeedWindows obtiene la frecuencia actual del CPU en Windows
 func getCurrentClockSpeedWindows() (float64, error) {
 	psCmd := `Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty CurrentClockSpeed`
 	cmd := exec.Command("powershell", "-Command", psCmd)

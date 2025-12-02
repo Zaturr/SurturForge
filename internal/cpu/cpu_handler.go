@@ -15,13 +15,11 @@ func GetCPUMetrics() (CPUMetrics, error) {
 		Duration: time.Now(),
 	}
 
-	// Obtener porcentaje de uso de CPU
 	usagePercentages, err := cpu.Percent(time.Second, false)
 	if err == nil && len(usagePercentages) > 0 {
 		metrics.UsagePercent = usagePercentages[0]
 	}
 
-	// Obtener información de CPU para velocidad del reloj
 	cpuInfos, err := cpu.Info()
 	if err == nil && len(cpuInfos) > 0 {
 		if cpuInfos[0].Mhz > 0 {

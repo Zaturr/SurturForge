@@ -134,10 +134,5 @@ func GetRAMMetrics() (RAMMetrics, error) {
 		metrics.SwapUsedPercent = swap.UsedPercent
 	}
 
-	// Nota: La velocidad de RAM no está disponible directamente en gopsutil/mem
-	// Se mantiene el campo Speed en la estructura pero se deja en 0
-	// Si se necesita, se podría usar el paquete host de gopsutil o mantener
-	// una llamada específica del sistema operativo solo para este dato
-
 	return metrics, nil
 }

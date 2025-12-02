@@ -10,7 +10,6 @@ import (
 func GetCPUInfo() (string, error) {
 	var info strings.Builder
 
-	// Obtener información de CPU
 	cpuInfos, err := cpu.Info()
 	if err != nil {
 		return "", fmt.Errorf("error al obtener información de CPU: %w", err)
@@ -20,10 +19,8 @@ func GetCPUInfo() (string, error) {
 		return "", fmt.Errorf("no se encontró información de CPU")
 	}
 
-	// Usar la primera CPU (generalmente todas tienen la misma información básica)
 	infoObj := cpuInfos[0]
 
-	// Construir la información formateada
 	if infoObj.ModelName != "" {
 		info.WriteString(fmt.Sprintf("Modelo: %s\n", infoObj.ModelName))
 	}
@@ -40,7 +37,6 @@ func GetCPUInfo() (string, error) {
 		info.WriteString(fmt.Sprintf("Stepping: %d\n", infoObj.Stepping))
 	}
 
-	// Obtener número de cores físicos y lógicos
 	physicalCores, err := cpu.Counts(false)
 	if err == nil {
 		info.WriteString(fmt.Sprintf("Cores Físicos: %d\n", physicalCores))
@@ -51,12 +47,10 @@ func GetCPUInfo() (string, error) {
 		info.WriteString(fmt.Sprintf("Cores Lógicos: %d\n", logicalCores))
 	}
 
-	// Obtener frecuencia de CPU si está disponible
 	if infoObj.Mhz > 0 {
 		info.WriteString(fmt.Sprintf("Frecuencia: %.2f MHz\n", infoObj.Mhz))
 	}
 
-	// Información adicional de CPU
 	if infoObj.CacheSize > 0 {
 		info.WriteString(fmt.Sprintf("Tamaño de Cache: %d KB\n", infoObj.CacheSize))
 	}
@@ -80,7 +74,6 @@ func GetCPUInfo() (string, error) {
 		}
 	}
 
-	// Si hay múltiples CPUs, mostrar información adicional
 	if len(cpuInfos) > 1 {
 		info.WriteString(fmt.Sprintf("\nTotal de CPUs detectadas: %d\n", len(cpuInfos)))
 	}

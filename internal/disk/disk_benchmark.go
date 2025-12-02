@@ -817,7 +817,7 @@ func (bm *Mark) PrintResults() {
 }
 
 // DisplayDiskBenchmarkResult muestra los resultados del benchmark de disco con formato mejorado
-func DisplayDiskBenchmarkResult(result *Result, formatBytes func(uint64) string, colorBold, colorReset, colorGreen, colorCyan, colorYellow, colorRed string, printHeader, printError func(string)) {
+func DisplayDiskBenchmarkResult(result *Result, formatBytes func(uint64) string, printHeader, printError func(string)) {
 	if result == nil {
 		printError("No hay resultados para mostrar")
 		return
@@ -826,85 +826,71 @@ func DisplayDiskBenchmarkResult(result *Result, formatBytes func(uint64) string,
 	printHeader("RESULTADOS BENCHMARK DE DISCO")
 
 	if result.WrittenBytes > 0 {
-		fmt.Printf("%sEscritura Secuencial:%s\n", colorBold, colorReset)
+		fmt.Printf("Escritura Secuencial:\n")
 		fmt.Printf("  Bytes escritos: %s\n", formatBytes(uint64(result.WrittenBytes)))
 		fmt.Printf("  Duración: %v\n", result.WrittenDuration)
-		fmt.Printf("  Rendimiento: %s%.2f MB/s%s\n", colorGreen, result.WriteThroughputMBs, colorReset)
+		fmt.Printf("  Rendimiento: %.2f MB/s\n", result.WriteThroughputMBs)
 		if result.WriteLatency > 0 {
-			fmt.Printf("  Latencia promedio: %s%v%s\n", colorCyan, result.WriteLatency, colorReset)
+			fmt.Printf("  Latencia promedio: %v\n", result.WriteLatency)
 		}
 		fmt.Println()
 	}
 
 	if result.ReadBytes > 0 {
-		fmt.Printf("%sLectura Secuencial:%s\n", colorBold, colorReset)
+		fmt.Printf("Lectura Secuencial:\n")
 		fmt.Printf("  Bytes leídos: %s\n", formatBytes(uint64(result.ReadBytes)))
 		fmt.Printf("  Duración: %v\n", result.ReadDuration)
-		fmt.Printf("  Rendimiento: %s%.2f MB/s%s\n", colorGreen, result.ReadThroughputMBs, colorReset)
+		fmt.Printf("  Rendimiento: %.2f MB/s\n", result.ReadThroughputMBs)
 		if result.ReadLatency > 0 {
-			fmt.Printf("  Latencia promedio: %s%v%s\n", colorCyan, result.ReadLatency, colorReset)
+			fmt.Printf("  Latencia promedio: %v\n", result.ReadLatency)
 		}
 		fmt.Println()
 	}
 
 	if result.SustainedThroughputMBs > 0 {
-		fmt.Printf("%sTasa de Transferencia Sostenida:%s\n", colorBold, colorReset)
-		fmt.Printf("  Throughput promedio: %s%.2f MB/s%s\n", colorGreen, result.SustainedThroughputMBs, colorReset)
+		fmt.Printf("Tasa de Transferencia Sostenida:\n")
+		fmt.Printf("  Throughput promedio: %.2f MB/s\n", result.SustainedThroughputMBs)
 		fmt.Println()
 	}
 
 	if result.IOOperations > 0 {
 		iops := float64(result.IOOperations) / result.IODuration.Seconds()
-		fmt.Printf("%sIOPS (Operaciones Aleatorias):%s\n", colorBold, colorReset)
+		fmt.Printf("IOPS (Operaciones Aleatorias):\n")
 		fmt.Printf("  Operaciones: %d\n", result.IOOperations)
 		fmt.Printf("  Duración: %v\n", result.IODuration)
-		fmt.Printf("  IOPS: %s%.0f%s\n", colorGreen, iops, colorReset)
+		fmt.Printf("  IOPS: %.0f\n", iops)
 		if result.IOPSLatency > 0 {
-			fmt.Printf("  Latencia promedio: %s%v%s\n", colorCyan, result.IOPSLatency, colorReset)
+			fmt.Printf("  Latencia promedio: %v\n", result.IOPSLatency)
 		}
 		fmt.Println()
 	}
 
 	if result.DeletedFiles > 0 {
 		deleteRate := float64(result.DeletedFiles) / result.DeleteDuration.Seconds()
-		fmt.Printf("%sEliminación de Archivos:%s\n", colorBold, colorReset)
+		fmt.Printf("Eliminación de Archivos:\n")
 		fmt.Printf("  Archivos eliminados: %d\n", result.DeletedFiles)
 		fmt.Printf("  Duración: %v\n", result.DeleteDuration)
-		fmt.Printf("  Velocidad: %s%.0f archivos/s%s\n", colorGreen, deleteRate, colorReset)
+		fmt.Printf("  Velocidad: %.0f archivos/s\n", deleteRate)
 		fmt.Println()
 	}
 
 	// Métricas de Consistencia y Estabilidad
 	if result.ConsistencyScore > 0 || result.StabilityScore > 0 {
-		fmt.Printf("%sConsistencia y Estabilidad:%s\n", colorBold, colorReset)
+		fmt.Printf("Consistencia y Estabilidad:\n")
 		if result.ConsistencyScore > 0 {
-			consistencyColor := colorGreen
-			if result.ConsistencyScore < 70 {
-				consistencyColor = colorYellow
-			}
-			if result.ConsistencyScore < 50 {
-				consistencyColor = colorRed
-			}
-			fmt.Printf("  Consistencia: %s%.1f/100%s (menor variación = mejor)\n",
-				consistencyColor, result.ConsistencyScore, colorReset)
+			fmt.Printf("  Consistencia: %.1f/100 (menor variación = mejor)\n",
+				result.ConsistencyScore)
 		}
 		if result.StabilityScore > 0 {
-			stabilityColor := colorGreen
-			if result.StabilityScore < 70 {
-				stabilityColor = colorYellow
-			}
-			if result.StabilityScore < 50 {
-				stabilityColor = colorRed
-			}
-			fmt.Printf("  Estabilidad: %s%.1f/100%s (menor cambio entre ciclos = mejor)\n",
-				stabilityColor, result.StabilityScore, colorReset)
+			fmt.Printf("  Estabilidad: %.1f/100 (menor cambio entre ciclos = mejor)\n",
+				result.StabilityScore)
 		}
 		fmt.Println()
 	}
 
 	// Overhead de CPU
 	if result.CPUOverheadPercent > 0 || result.CPUAverageUsage > 0 {
-		fmt.Printf("%sOverhead de CPU:%s\n", colorBold, colorReset)
+		fmt.Printf("Overhead de CPU:\n")
 		if result.CPUIdleBefore > 0 {
 			fmt.Printf("  CPU Idle antes: %.1f%%\n", result.CPUIdleBefore)
 		}
@@ -915,24 +901,17 @@ func DisplayDiskBenchmarkResult(result *Result, formatBytes func(uint64) string,
 			fmt.Printf("  CPU pico: %.1f%%\n", result.CPUPeakUsage)
 		}
 		if result.CPUOverheadPercent > 0 {
-			overheadColor := colorGreen
-			if result.CPUOverheadPercent > 30 {
-				overheadColor = colorYellow
-			}
-			if result.CPUOverheadPercent > 50 {
-				overheadColor = colorRed
-			}
-			fmt.Printf("  Overhead: %s%.1f%%%s (diferencia CPU idle antes vs durante)\n",
-				overheadColor, result.CPUOverheadPercent, colorReset)
+			fmt.Printf("  Overhead: %.1f%% (diferencia CPU idle antes vs durante)\n",
+				result.CPUOverheadPercent)
 		}
 		fmt.Println()
 	}
 
 	// Resumen comparativo
 	if result.WrittenBytes > 0 && result.ReadBytes > 0 {
-		fmt.Printf("%sResumen:%s\n", colorBold, colorReset)
+		fmt.Printf("Resumen:\n")
 		if result.SustainedThroughputMBs > 0 {
-			fmt.Printf("  Throughput sostenido: %s%.2f MB/s%s\n", colorCyan, result.SustainedThroughputMBs, colorReset)
+			fmt.Printf("  Throughput sostenido: %.2f MB/s\n", result.SustainedThroughputMBs)
 		}
 		if result.DeletedFiles > 0 {
 			fmt.Printf("  Archivos eliminados: %d (para liberar espacio en disco)\n", result.DeletedFiles)
