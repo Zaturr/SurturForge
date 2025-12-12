@@ -9,11 +9,11 @@ import (
 )
 
 const (
-	dataSizeMB = 16
-	dataSizeBytes = dataSizeMB * 1024 * 1024
-	blockSizeMB = 1
+	dataSizeMB     = 16
+	dataSizeBytes  = dataSizeMB * 1024 * 1024
+	blockSizeMB    = 1
 	blockSizeBytes = blockSizeMB * 1024 * 1024
-	numBlocks = 16
+	numBlocks      = 16
 )
 
 func BenchmarkSHA256SingleCore(b *testing.B) {

@@ -155,6 +155,73 @@ func CalculateSyntheticScores(benchmarks map[string]*BenchmarkResult) (singleCor
 	return singleCoreScore, multiCoreScore
 }
 
+// CalculatePerformanceMetrics calcula MIPS, GIPS y FLOPS basado en los benchmarks
+func CalculatePerformanceMetrics(benchmarks map[string]*BenchmarkResult, stats *CPUStats) (mips, gips, flops float64) {
+	if stats == nil || stats.Duration == 0 {
+		return 0, 0, 0
+	}
+
+	durationSeconds := stats.Duration.Seconds()
+	if durationSeconds == 0 {
+		return 0, 0, 0
+	}
+
+	// Estimación de operaciones basada en los benchmarks
+	// SHA256: ~64 operaciones por byte (aproximadamente)
+	// AES256: ~10 operaciones por byte (aproximadamente)
+	// Usamos una estimación conservadora
+
+	var totalOps float64
+	dataSizeBytes := 16 * 1024 * 1024 // 16 MB por benchmark
+
+	// SHA256 Single Core
+	if sha := FindBenchmark(benchmarks, "BenchmarkSHA256SingleCore"); sha != nil {
+		var iterations int64
+		fmt.Sscanf(sha.Iterations, "%d", &iterations)
+		// SHA256: aproximadamente 64 operaciones por byte
+		opsPerIteration := float64(dataSizeBytes) * 64
+		totalOps += float64(iterations) * opsPerIteration
+	}
+
+	// AES256 Single Core
+	if aes := FindBenchmark(benchmarks, "BenchmarkAES256SingleCore"); aes != nil {
+		var iterations int64
+		fmt.Sscanf(aes.Iterations, "%d", &iterations)
+		// AES256: aproximadamente 10 operaciones por byte
+		opsPerIteration := float64(dataSizeBytes) * 10
+		totalOps += float64(iterations) * opsPerIteration
+	}
+
+	// SHA256 Multi Core
+	if sha := FindBenchmark(benchmarks, "BenchmarkSHA256MultiCore"); sha != nil {
+		var iterations int64
+		fmt.Sscanf(sha.Iterations, "%d", &iterations)
+		// Multi-core: multiplicar por número de cores (estimado en 4-8)
+		opsPerIteration := float64(dataSizeBytes) * 64 * 4 // Estimación conservadora
+		totalOps += float64(iterations) * opsPerIteration
+	}
+
+	// AES256 Multi Core
+	if aes := FindBenchmark(benchmarks, "BenchmarkAES256MultiCore"); aes != nil {
+		var iterations int64
+		fmt.Sscanf(aes.Iterations, "%d", &iterations)
+		opsPerIteration := float64(dataSizeBytes) * 10 * 4 // Estimación conservadora
+		totalOps += float64(iterations) * opsPerIteration
+	}
+
+	if totalOps > 0 {
+		opsPerSecond := totalOps / durationSeconds
+		mips = opsPerSecond / 1_000_000  // Million Instructions Per Second
+		gips = opsPerSecond / 1_000_000_000 // Giga Instructions Per Second
+		
+		// FLOPS: estimación basada en operaciones de punto flotante
+		// Asumimos que ~10% de las operaciones son FLOPS
+		flops = (opsPerSecond * 0.1) / 1_000_000_000 // Giga FLOPS
+	}
+
+	return mips, gips, flops
+}
+
 func FormatTime(ns string) string {
 	var nanoseconds int64
 	if _, err := fmt.Sscanf(ns, "%d", &nanoseconds); err != nil {
@@ -173,7 +240,7 @@ func FormatTime(ns string) string {
 	}
 }
 
-func GenerateBenchmarkReport(output string, stats *CPUStats) (*BenchmarkReport, error) {
+func GenerateBenchmarkReport(output string, stats *CPUStats, cpuUsageBefore float64) (*BenchmarkReport, error) {
 	benchmarks := ParseBenchmarkOutput(output)
 
 	var baselineResult *baseline.BaselineResult
@@ -183,12 +250,33 @@ func GenerateBenchmarkReport(output string, stats *CPUStats) (*BenchmarkReport, 
 
 	singleCoreScore, multiCoreScore := CalculateSyntheticScores(benchmarks)
 
+	// Capturar CPU después del benchmark
+	var cpuUsageAfter float64
+	if metrics, err := GetCPUMetrics(); err == nil {
+		cpuUsageAfter = metrics.UsagePercent
+	} else if stats != nil && stats.Samples > 0 {
+		// Si no podemos obtener métricas actuales, usar el promedio durante el benchmark
+		cpuUsageAfter = stats.Average
+	}
+
+	// Calcular cambio en uso de CPU
+	cpuUsageChange := cpuUsageAfter - cpuUsageBefore
+
+	// Calcular MIPS/GIPS/FLOPS
+	mips, gips, flops := CalculatePerformanceMetrics(benchmarks, stats)
+
 	return &BenchmarkReport{
 		Benchmarks:      benchmarks,
 		SingleCoreScore: singleCoreScore,
 		MultiCoreScore:  multiCoreScore,
 		Stats:           stats,
 		BaselineResult:  baselineResult,
+		CPUUsageBefore:  cpuUsageBefore,
+		CPUUsageAfter:   cpuUsageAfter,
+		CPUUsageChange:  cpuUsageChange,
+		MIPS:            mips,
+		GIPS:            gips,
+		FLOPS:           flops,
 	}, nil
 }
 

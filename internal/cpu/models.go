@@ -44,5 +44,13 @@ type BenchmarkReport struct {
 	MultiCoreScore  float64
 	Stats           *CPUStats
 	BaselineResult  *baseline.BaselineResult
+	// Métricas de CPU durante el benchmark
+	CPUUsageBefore  float64
+	CPUUsageAfter   float64
+	CPUUsageChange  float64
+	// Métricas de rendimiento
+	MIPS            float64 // Million Instructions Per Second
+	GIPS            float64 // Giga Instructions Per Second
+	FLOPS           float64 // Floating Point Operations Per Second
 }
 

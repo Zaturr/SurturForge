@@ -19,8 +19,9 @@ import (
 
 // Constantes para el benchmark
 const (
-	Blocksize     = 0x1 << 16 // 65,536 bytes (64 KB)
-	DiskBlockSize = 0x1 << 9  // 512 bytes
+	Blocksize       = 0x1 << 16 // 65,536 bytes (64 KB)
+	DiskBlockSize   = 0x1 << 9  // 512 bytes
+	RandomBlockSize = 0x1 << 12 // 4,096 bytes (4 KB) para test aleatorio
 )
 
 // Mark estructura principal del benchmark de disco
@@ -61,6 +62,14 @@ type Result struct {
 	ReadLatency  time.Duration
 	IOPSLatency  time.Duration
 
+	// IOPS aleatorias (4KB) separadas por lectura/escritura
+	RandomReadOps      int
+	RandomWriteOps     int
+	RandomReadIOPS     float64
+	RandomWriteIOPS    float64
+	RandomReadLatency  time.Duration
+	RandomWriteLatency time.Duration
+
 	ConsistencyScore float64
 	StabilityScore   float64
 
@@ -74,6 +83,12 @@ type Result struct {
 type ThreadResult struct {
 	Result int // bytes escritos, bytes leídos, o número de operaciones
 	Error  error
+}
+
+type RandomIOPSResult struct {
+	ReadOps  int
+	WriteOps int
+	Error    error
 }
 
 func NewMark(tempDir string, aggregateSizeGiB float64) *Mark {
@@ -336,16 +351,18 @@ func (bm *Mark) RunIOPSTest() error {
 	bm.cpuMonitorDone = make(chan struct{})
 	bm.startCPUMonitoring()
 
-	opsPerformed := make(chan ThreadResult, bm.NumReadersWriters)
+	opsPerformed := make(chan RandomIOPSResult, bm.NumReadersWriters)
 	start := time.Now()
 
 	for i := 0; i < bm.NumReadersWriters; i++ {
-		go bm.singleThreadIOPSTest(
+		go bm.singleThreadRandomIOPSTest(
 			filepath.Join(bm.TempDir, fmt.Sprintf("%s%d", bm.randomString, i)),
 			opsPerformed,
 		)
 	}
 
+	newResult.RandomReadOps = 0
+	newResult.RandomWriteOps = 0
 	newResult.IOOperations = 0
 	for i := 0; i < bm.NumReadersWriters; i++ {
 		result := <-opsPerformed
@@ -353,7 +370,9 @@ func (bm *Mark) RunIOPSTest() error {
 			bm.stopCPUMonitoring()
 			return fmt.Errorf("error en IOPS: %w", result.Error)
 		}
-		newResult.IOOperations += result.Result
+		newResult.RandomReadOps += result.ReadOps
+		newResult.RandomWriteOps += result.WriteOps
+		newResult.IOOperations += result.ReadOps + result.WriteOps
 	}
 
 	newResult.IODuration = time.Since(start)
@@ -361,6 +380,7 @@ func (bm *Mark) RunIOPSTest() error {
 	bm.calculateCPUOverhead(resultIdx)
 
 	bm.calculateIOPSMetrics(resultIdx)
+	bm.calculateRandomIOPSMetrics(resultIdx)
 
 	if err := bm.CleanupTestFiles(); err != nil {
 		fmt.Printf("Advertencia: error limpiando archivos después de IOPS: %v\n", err)
@@ -369,78 +389,84 @@ func (bm *Mark) RunIOPSTest() error {
 	return nil
 }
 
-func (bm *Mark) singleThreadIOPSTest(filename string, numOpsChannel chan<- ThreadResult) {
-	diskBlockSize := DiskBlockSize // 512 bytes (tamaño de sector tradicional)
+func (bm *Mark) singleThreadRandomIOPSTest(filename string, resultChannel chan<- RandomIOPSResult) {
+	blockSize := RandomBlockSize // 4 KB para test aleatorio
 
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
-		numOpsChannel <- ThreadResult{Result: 0, Error: err}
+		resultChannel <- RandomIOPSResult{ReadOps: 0, WriteOps: 0, Error: err}
 		return
 	}
-	fileSizeLessOneDiskBlock := fileInfo.Size() - int64(diskBlockSize)
-	if fileSizeLessOneDiskBlock <= 0 {
-		numOpsChannel <- ThreadResult{Result: 0, Error: fmt.Errorf("archivo demasiado pequeño para test IOPS")}
+	fileSizeLessOneBlock := fileInfo.Size() - int64(blockSize)
+	if fileSizeLessOneBlock <= 0 {
+		resultChannel <- RandomIOPSResult{ReadOps: 0, WriteOps: 0, Error: fmt.Errorf("archivo demasiado pequeño para test IOPS")}
 		return
 	}
-	numOperations := 0
 
 	f, err := os.OpenFile(filename, os.O_RDWR, 0644)
 	if err != nil {
-		numOpsChannel <- ThreadResult{Result: 0, Error: err}
+		resultChannel <- RandomIOPSResult{ReadOps: 0, WriteOps: 0, Error: err}
 		return
 	}
 	defer f.Close()
 
-	data := make([]byte, diskBlockSize)
-	checksum := make([]byte, diskBlockSize)
+	data := make([]byte, blockSize)
+	writeData := make([]byte, blockSize)
+	cryptorand.Read(writeData) // Datos aleatorios para escritura
 
+	readOps := 0
+	writeOps := 0
 	start := time.Now()
+
 	for time.Since(start).Seconds() < bm.IODuration {
-		randomPos := mathrand.Int63n(fileSizeLessOneDiskBlock)
+		randomPos := mathrand.Int63n(fileSizeLessOneBlock)
 		_, err = f.Seek(randomPos, 0)
 		if err != nil {
-			numOpsChannel <- ThreadResult{Result: 0, Error: err}
+			resultChannel <- RandomIOPSResult{ReadOps: 0, WriteOps: 0, Error: err}
 			return
 		}
 
-		if numOperations%10 != 0 {
+		// Alternar entre lectura (90%) y escritura (10%)
+		if (readOps+writeOps)%10 != 0 {
+			// Operación de lectura
 			length, err := f.Read(data)
 			if err != nil && err != io.EOF {
-				numOpsChannel <- ThreadResult{Result: 0, Error: err}
+				resultChannel <- RandomIOPSResult{ReadOps: 0, WriteOps: 0, Error: err}
 				return
 			}
-			if length != diskBlockSize && err != io.EOF {
-				panic(fmt.Sprintf("I expected to read %d bytes, instead I read %d bytes!",
-					diskBlockSize, length))
-			}
-			for j := 0; j < length && j < diskBlockSize; j++ {
-				checksum[j] ^= data[j]
-			}
-		} else {
-			length, err := f.Write(checksum)
-			if err != nil {
-				numOpsChannel <- ThreadResult{Result: 0, Error: err}
-				return
-			}
-			if length != diskBlockSize {
-				numOpsChannel <- ThreadResult{
-					Result: 0,
-					Error: fmt.Errorf("i expected to write %d bytes, instead i wrote %d bytes",
-						diskBlockSize, length),
+			if length != blockSize && err != io.EOF {
+				resultChannel <- RandomIOPSResult{
+					ReadOps: 0, WriteOps: 0,
+					Error: fmt.Errorf("se esperaba leer %d bytes, se leyeron %d bytes", blockSize, length),
 				}
 				return
 			}
+			readOps++
+		} else {
+			// Operación de escritura
+			length, err := f.Write(writeData)
+			if err != nil {
+				resultChannel <- RandomIOPSResult{ReadOps: 0, WriteOps: 0, Error: err}
+				return
+			}
+			if length != blockSize {
+				resultChannel <- RandomIOPSResult{
+					ReadOps: 0, WriteOps: 0,
+					Error: fmt.Errorf("se esperaba escribir %d bytes, se escribieron %d bytes", blockSize, length),
+				}
+				return
+			}
+			writeOps++
 		}
-		numOperations++
 	}
 
 	err = f.Close()
 	if err != nil {
-		numOpsChannel <- ThreadResult{Result: 0, Error: err}
+		resultChannel <- RandomIOPSResult{ReadOps: 0, WriteOps: 0, Error: err}
 		return
 	}
 
-	numOpsChannel <- ThreadResult{Result: numOperations, Error: nil}
+	resultChannel <- RandomIOPSResult{ReadOps: readOps, WriteOps: writeOps, Error: nil}
 }
 
 func (bm *Mark) CleanupTestFiles() error {
@@ -688,6 +714,24 @@ func (bm *Mark) calculateIOPSMetrics(resultIdx int) {
 
 	if result.IODuration > 0 && result.IOOperations > 0 {
 		result.IOPSLatency = result.IODuration / time.Duration(result.IOOperations)
+	}
+}
+
+func (bm *Mark) calculateRandomIOPSMetrics(resultIdx int) {
+	result := &bm.Results[resultIdx]
+
+	if result.IODuration > 0 {
+		durationSeconds := result.IODuration.Seconds()
+
+		if result.RandomReadOps > 0 {
+			result.RandomReadIOPS = float64(result.RandomReadOps) / durationSeconds
+			result.RandomReadLatency = result.IODuration / time.Duration(result.RandomReadOps)
+		}
+
+		if result.RandomWriteOps > 0 {
+			result.RandomWriteIOPS = float64(result.RandomWriteOps) / durationSeconds
+			result.RandomWriteLatency = result.IODuration / time.Duration(result.RandomWriteOps)
+		}
 	}
 }
 

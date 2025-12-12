@@ -53,6 +53,12 @@ type RAMBenchmarkResult struct {
 	DataIntegrityOK    bool
 	Iterations         []BenchmarkIterationResult
 	Timestamp          time.Time
+	// Métricas de RAM durante el benchmark
+	RAMUsedBefore  uint64
+	RAMUsedAfter   uint64
+	RAMUsageBefore float64
+	RAMUsageAfter  float64
+	RAMUsageChange float64
 }
 
 func DefaultRAMBenchmarkConfig() RAMBenchmarkConfig {
@@ -285,9 +291,15 @@ func RunRAMBenchmark(config RAMBenchmarkConfig) (*RAMBenchmarkResult, error) {
 
 	finalMetrics, err := GetRAMMetrics()
 	if err == nil {
+		result.RAMUsedBefore = metrics.UsedRAM
+		result.RAMUsedAfter = finalMetrics.UsedRAM
+		result.RAMUsageBefore = metrics.UsagePercent
+		result.RAMUsageAfter = finalMetrics.UsagePercent
+		result.RAMUsageChange = finalMetrics.UsagePercent - metrics.UsagePercent
+
 		fmt.Printf("\n=== Verificación Post-Benchmark ===\n")
 		fmt.Printf("RAM usada después: %s (%.1f%%)\n", formatBytes(finalMetrics.UsedRAM), finalMetrics.UsagePercent)
-		fmt.Printf("Cambio en uso: %.1f%%\n", finalMetrics.UsagePercent-metrics.UsagePercent)
+		fmt.Printf("Cambio en uso: %.1f%%\n", result.RAMUsageChange)
 	}
 
 	// La limpieza de memoria se realizará automáticamente mediante defer

@@ -142,7 +142,13 @@ func displayBaseline() {
 	fmt.Printf("\nNota: Compara estos valores con los resultados de los benchmarks\n       para detectar degradación del rendimiento del sistema.\n")
 }
 
-func runBenchmark(pattern, desc string) (string, *cpu.CPUStats, error) {
+func runBenchmark(pattern, desc string) (string, *cpu.CPUStats, float64, error) {
+	// Capturar CPU antes del benchmark
+	var cpuUsageBefore float64
+	if metrics, err := cpu.GetCPUMetrics(); err == nil {
+		cpuUsageBefore = metrics.UsagePercent
+	}
+
 	printInfo(desc)
 	done := make(chan struct{})
 	statsChan := make(chan *cpu.CPUStats, 1)
@@ -163,16 +169,17 @@ func runBenchmark(pattern, desc string) (string, *cpu.CPUStats, error) {
 	}
 
 	if err != nil {
-		return "", stats, fmt.Errorf("%v\n%s", err, string(output))
+		return "", stats, cpuUsageBefore, fmt.Errorf("%v\n%s", err, string(output))
 	}
-	return string(output), stats, nil
+	return string(output), stats, cpuUsageBefore, nil
 }
 
-func displaySummary(output string, stats *cpu.CPUStats) {
-	if report, err := cpu.GenerateBenchmarkReport(output, stats); err != nil {
+func displaySummary(output string, stats *cpu.CPUStats, cpuUsageBefore float64) {
+	if report, err := cpu.GenerateBenchmarkReport(output, stats, cpuUsageBefore); err != nil {
 		printError(fmt.Sprintf("Error generando reporte: %v", err))
 	} else {
 		cpu.DisplayReport(report, printHeader, printSection)
+		cpu.DisplayCPUBenchmarkSummary(report)
 	}
 }
 
@@ -182,6 +189,7 @@ func runRAMBenchmarkWithConfig(config ram.RAMBenchmarkConfig) {
 		printError(fmt.Sprintf("Error ejecutando benchmark: %v", err))
 	} else {
 		fmt.Printf("\n%s\n", ram.FormatBenchmarkResult(result))
+		ram.DisplayRAMBenchmarkSummary(result)
 	}
 }
 
@@ -206,6 +214,7 @@ func handleRAMStressMenu() {
 				printError(fmt.Sprintf("Error: %v", err))
 			} else {
 				fmt.Println(ram.FormatBenchmarkResult(result))
+				ram.DisplayRAMBenchmarkSummary(result)
 			}
 		} else {
 			printInfo(fmt.Sprintf("Configuración: %d MB, duración objetivo ~1 minuto\n", cfg.sizeMB))
@@ -227,12 +236,12 @@ func handleCPUMenu() {
 
 	switch choice {
 	case "1":
-		output, stats, err := runBenchmark("^Benchmark.*", "Ejecutando todos los benchmarks...")
+		output, stats, cpuBefore, err := runBenchmark("^Benchmark.*", "Ejecutando todos los benchmarks...")
 		if err != nil {
 			printError(fmt.Sprintf("Error: %v", err))
 			return
 		}
-		displaySummary(output, stats)
+		displaySummary(output, stats, cpuBefore)
 
 	case "2":
 		benchmarks := []string{
@@ -244,11 +253,15 @@ func handleCPUMenu() {
 		var allOutput strings.Builder
 		var allStats []*cpu.CPUStats
 
-		for _, name := range benchmarks {
-			output, stats, err := runBenchmark("^"+name+"$", name+"...")
+		var cpuBefore float64
+		for i, name := range benchmarks {
+			output, stats, cpuBeforeTemp, err := runBenchmark("^"+name+"$", name+"...")
 			if err != nil {
 				printError(fmt.Sprintf("Error: %v", err))
 				continue
+			}
+			if i == 0 {
+				cpuBefore = cpuBeforeTemp // Usar el CPU antes del primer benchmark
 			}
 			allOutput.WriteString(output)
 			allOutput.WriteString("\n")
@@ -317,7 +330,7 @@ func handleCPUMenu() {
 			combinedStats.Duration = combinedStats.EndTime.Sub(combinedStats.StartTime)
 		}
 
-		displaySummary(allOutput.String(), combinedStats)
+		displaySummary(allOutput.String(), combinedStats, cpuBefore)
 	}
 }
 
@@ -378,6 +391,7 @@ func handleDiskBenchmarkMenu() {
 	}
 	if result := bm.GetLastResult(); result != nil {
 		disk.DisplayDiskBenchmarkResult(result, formatBytes, printHeader, printError)
+		disk.DisplayDiskBenchmarkSummary(result)
 	}
 	if err := bm.CleanupTestFiles(); err != nil {
 		printError(fmt.Sprintf("Advertencia: error limpiando archivos: %v", err))
