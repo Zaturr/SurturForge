@@ -22,6 +22,21 @@ import (
 	gopsutildisk "github.com/shirou/gopsutil/v4/disk"
 )
 
+// Estructuras para almacenar resultados de benchmarks
+type BenchmarkSession struct {
+	CPUResults   []*cpu.BenchmarkReport
+	RAMResults   []*ram.RAMBenchmarkResult
+	DiskResults  []*disk.Result
+	SessionStart time.Time
+}
+
+var sessionResults = &BenchmarkSession{
+	CPUResults:   make([]*cpu.BenchmarkReport, 0),
+	RAMResults:   make([]*ram.RAMBenchmarkResult, 0),
+	DiskResults:  make([]*disk.Result, 0),
+	SessionStart: time.Now(),
+}
+
 func printHeader(text string) {
 	fmt.Printf("\n%s\n%s\n", text, strings.Repeat("=", 60))
 }
@@ -47,7 +62,6 @@ func displaySystemInfo() {
 	printSection("Procesador (CPU)")
 	if info, err := cpu.GetCPUInfo(); err == nil {
 		fmt.Println(info)
-		fmt.Println("   Explicación:\n    • Modelo: Nombre del procesador según el fabricante\n    • Cores Físicos: Núcleos reales del procesador (rendimiento base)\n    • Cores Lógicos: Cores físicos × threads por core (Hyper-Threading/SMT)\n    • Frecuencia: Velocidad del reloj (MHz) - mayor = más rápido\n    • Cache: Memoria rápida integrada en el CPU (reduce latencia)")
 	} else {
 		printError(fmt.Sprintf("Error obteniendo info CPU: %v", err))
 	}
@@ -65,7 +79,6 @@ func displaySystemInfo() {
 	printSection("Almacenamiento (Disco)")
 	if info, err := disk.GetDiskInfo(); err == nil {
 		fmt.Println(info)
-		fmt.Println("   Explicación:\n    • Tamaño Total: Capacidad total del dispositivo\n    • Espacio Usado: Cantidad de datos almacenados\n    • Espacio Libre: Espacio disponible para nuevos datos\n    • Uso: Porcentaje del disco ocupado\n    • Inodos: Estructuras de metadatos del sistema de archivos\n      (Linux/Unix: límite de archivos que se pueden crear)")
 	} else {
 		printError(fmt.Sprintf("Error obteniendo info Disco: %v", err))
 	}
@@ -86,10 +99,12 @@ func displayBaseline() {
 		return
 	}
 	printSection("Hardware Detectado")
-	fmt.Printf("Cores Físicos: %d | Cores Lógicos: %d\nRAM Total: %s\nDisco Total: %s | Disco Libre: %s\n",
+	ramUsed := result.Hardware.RAMTotal - result.Baseline.MemoryAvailable
+	diskUsed := result.Hardware.DiskTotal - result.Hardware.DiskFree
+	fmt.Printf("Cores Físicos: %d | Cores Lógicos: %d\nRAM Total: %s | RAM Usada: %s | RAM Disponible: %s\nDisco Total: %s | Disco Usado: %s | Disco Libre: %s\n",
 		result.Hardware.CPUCoresPhysical, result.Hardware.CPUCoresLogical,
-		baseline.FormatBytes(result.Hardware.RAMTotal),
-		baseline.FormatBytes(result.Hardware.DiskTotal), baseline.FormatBytes(result.Hardware.DiskFree))
+		baseline.FormatBytes(result.Hardware.RAMTotal), baseline.FormatBytes(ramUsed), baseline.FormatBytes(result.Baseline.MemoryAvailable),
+		baseline.FormatBytes(result.Hardware.DiskTotal), baseline.FormatBytes(diskUsed), baseline.FormatBytes(result.Hardware.DiskFree))
 	if len(result.Hardware.NetworkInterfaces) > 0 {
 		fmt.Printf("Interfaces de Red: %d\n", len(result.Hardware.NetworkInterfaces))
 	}
@@ -102,7 +117,7 @@ func displayBaseline() {
 	if result.Baseline.NetworkLatency > 0 {
 		fmt.Printf("Latencia de Red Base: %v\n", result.Baseline.NetworkLatency)
 	}
-	fmt.Println("   Baseline: Estado del sistema antes de los tests\n    • CPU Idle: Porcentaje de CPU sin uso (mayor = sistema más libre)\n    • Memoria Libre: RAM no utilizada\n    • Memoria Disponible: RAM que puede usarse (incluye caché liberable)\n    • Disco Libre: Espacio disponible para operaciones de I/O\n    • Latencia de Red: Tiempo de respuesta de red base")
+	fmt.Println("   Baseline: Estado del sistema antes de los tests")
 	printSection("Configuración del Entorno")
 	fmt.Printf("Sistema: %s %s | Go: %s\nProcesos Activos: %d\n   Entorno: Configuración del sistema operativo y runtime\n    • OS/Arquitectura: Plataforma de ejecución\n    • Go Version: Versión del runtime Go\n    • Procesos: Número de procesos en ejecución\n",
 		result.Environment.OS, result.Environment.Architecture, result.Environment.GoVersion, result.Environment.ProcessCount)
@@ -173,20 +188,25 @@ func displaySummary(output string, stats *cpu.CPUStats) {
 		printError(fmt.Sprintf("Error generando reporte: %v", err))
 	} else {
 		cpu.DisplayReport(report, printHeader, printSection)
+		// Guardar resultado en la sesión
+		sessionResults.CPUResults = append(sessionResults.CPUResults, report)
 	}
 }
 
 func runRAMBenchmarkWithConfig(config ram.RAMBenchmarkConfig) {
 	printHeader("BENCHMARK DE RAM")
+	// Usar la función original sin barra de progreso
 	if result, err := ram.RunRAMBenchmark(config); err != nil {
 		printError(fmt.Sprintf("Error ejecutando benchmark: %v", err))
 	} else {
 		fmt.Printf("\n%s\n", ram.FormatBenchmarkResult(result))
+		// Guardar resultado en la sesión
+		sessionResults.RAMResults = append(sessionResults.RAMResults, result)
 	}
 }
 
 func handleRAMStressMenu() {
-	fmt.Println("\n=== Benchmark de RAM - Throughput (Ancho de Banda) ===\nEste benchmark mide la velocidad de lectura y escritura secuencial de RAM\nusando bloques grandes para evitar el cache L3 del CPU.\n\nCaracterísticas:\n  • Duración: ~1 minuto (múltiples iteraciones)\n  • Verificación de integridad de datos en cada iteración\n  • Estadísticas detalladas (promedio, min, max, desviación estándar)\n  • Análisis de estabilidad del rendimiento\n\nOpciones:\n1. Benchmark estándar (512 MB - recomendado, ~1 minuto)\n2. Benchmark rápido (256 MB, ~1 minuto)\n3. Benchmark medio (1 GB, ~1 minuto)\n4. Benchmark intensivo (2 GB, ~1 minuto)\n\nOpción: ")
+	fmt.Println("\n=== Benchmark de RAM - Throughput (Ancho de Banda) ===\nEste benchmark mide la velocidad de lectura y escritura secuencial de RAM\nusando bloques grandes para evitar el cache L3 del CPU.\n\nCaracterísticas:\n  • Duración: ~1 minuto (múltiples iteraciones)\n  • Verificación de integridad de datos en cada iteración\n  • Estadísticas detalladas (promedio, min, max, desviación estándar)\n  • Análisis de estabilidad del rendimiento\n\nOpciones:\n1. Benchmark estándar (512 MB - recomendado, ~1 minuto)\n2. Benchmark rápido (256 MB, ~1 minuto)\n3. Benchmark medio (1 GB, ~1 minuto)\n4. Benchmark intensivo (2 GB, ~1 minuto)\n5. Tamaño personalizado (ingresar manualmente)\n\nOpción: ")
 	var choice string
 	fmt.Scanln(&choice)
 	configs := map[string]struct {
@@ -198,14 +218,31 @@ func handleRAMStressMenu() {
 		"3": {1024, "MEDIO"},
 		"4": {2048, "INTENSIVO"},
 	}
-	if cfg, ok := configs[choice]; ok {
+	if choice == "5" {
+		// Opción de tamaño personalizado
+		fmt.Print("Ingrese el tamaño en MB (mínimo 64 MB): ")
+		var sizeInput string
+		fmt.Scanln(&sizeInput)
+		sizeMB, err := strconv.Atoi(strings.TrimSpace(sizeInput))
+		if err != nil || sizeMB < 64 {
+			printError("Tamaño inválido. Debe ser un número entero mayor o igual a 64 MB.")
+			return
+		}
+		printInfo(fmt.Sprintf("Configuración personalizada: %d MB, duración objetivo ~1 minuto\n", sizeMB))
+		runRAMBenchmarkWithConfig(ram.RAMBenchmarkConfig{
+			BlockSizeMB: sizeMB, TargetDuration: 60 * time.Second, MinIterations: 3})
+	} else if cfg, ok := configs[choice]; ok {
 		if choice == "1" {
 			printHeader("BENCHMARK DE RAM - " + cfg.name)
 			printInfo("Configuración: 512 MB, duración objetivo ~1 minuto\nEl benchmark ejecutará múltiples iteraciones hasta alcanzar 1 minuto\n")
-			if result, err := ram.RunRAMBenchmarkWithDefault(); err != nil {
+			// Usar la función original sin barra de progreso
+			defaultConfig := ram.DefaultRAMBenchmarkConfig()
+			if result, err := ram.RunRAMBenchmark(defaultConfig); err != nil {
 				printError(fmt.Sprintf("Error: %v", err))
 			} else {
 				fmt.Println(ram.FormatBenchmarkResult(result))
+				// Guardar resultado en la sesión
+				sessionResults.RAMResults = append(sessionResults.RAMResults, result)
 			}
 		} else {
 			printInfo(fmt.Sprintf("Configuración: %d MB, duración objetivo ~1 minuto\n", cfg.sizeMB))
@@ -218,8 +255,8 @@ func handleRAMStressMenu() {
 }
 
 func handleCPUMenu() {
-	fmt.Println("\n1. Todos los benchmarks")
-	fmt.Println("2. Benchmarks individuales")
+	fmt.Println("\n1. Todas las pruebas")
+	fmt.Println("2. Pruebas individuales")
 	fmt.Print("Opción: ")
 
 	var choice string
@@ -227,7 +264,7 @@ func handleCPUMenu() {
 
 	switch choice {
 	case "1":
-		output, stats, err := runBenchmark("^Benchmark.*", "Ejecutando todos los benchmarks...")
+		output, stats, err := runBenchmark("^Benchmark.*", "Ejecutando todos las pruebas...")
 		if err != nil {
 			printError(fmt.Sprintf("Error: %v", err))
 			return
@@ -378,6 +415,8 @@ func handleDiskBenchmarkMenu() {
 	}
 	if result := bm.GetLastResult(); result != nil {
 		disk.DisplayDiskBenchmarkResult(result, formatBytes, printHeader, printError)
+		// Guardar resultado en la sesión
+		sessionResults.DiskResults = append(sessionResults.DiskResults, result)
 	}
 	if err := bm.CleanupTestFiles(); err != nil {
 		printError(fmt.Sprintf("Advertencia: error limpiando archivos: %v", err))
@@ -439,6 +478,110 @@ func cleanupDiskBenchmark(bm *disk.Mark, tempDir string, diskBefore uint64) {
 	}
 }
 
+func displayBenchmarkSummary() {
+	printHeader("RESUMEN DE BENCHMARKS DE LA SESIÓN")
+
+	totalBenchmarks := len(sessionResults.CPUResults) + len(sessionResults.RAMResults) + len(sessionResults.DiskResults)
+
+	if totalBenchmarks == 0 {
+		printInfo("No se han ejecutado benchmarks en esta sesión.")
+		fmt.Printf("Sesión iniciada: %s\n", sessionResults.SessionStart.Format("2006-01-02 15:04:05"))
+		return
+	}
+
+	fmt.Printf("Sesión iniciada: %s\n", sessionResults.SessionStart.Format("2006-01-02 15:04:05"))
+	fmt.Printf("Total de benchmarks ejecutados: %d\n\n", totalBenchmarks)
+
+	// Resumen de CPU
+	if len(sessionResults.CPUResults) > 0 {
+		printSection("BENCHMARKS DE CPU")
+		fmt.Printf("Total ejecutados: %d\n\n", len(sessionResults.CPUResults))
+		for i, report := range sessionResults.CPUResults {
+			fmt.Printf("--- Ejecución %d ---\n", i+1)
+			if report.Stats != nil && !report.Stats.StartTime.IsZero() {
+				fmt.Printf("Fecha: %s\n", report.Stats.StartTime.Format("2006-01-02 15:04:05"))
+			}
+			if len(report.Benchmarks) > 0 {
+				fmt.Println("Resultados:")
+				for name, result := range report.Benchmarks {
+					fmt.Printf("  %s: %s %s\n", name, result.Iterations, cpu.FormatTime(result.TimePerOp))
+				}
+			}
+			if report.SingleCoreScore > 0 {
+				fmt.Printf("Puntuación Single-Core: %.2f\n", report.SingleCoreScore)
+			}
+			if report.MultiCoreScore > 0 {
+				fmt.Printf("Puntuación Multi-Core: %.2f\n", report.MultiCoreScore)
+			}
+			if report.Stats != nil {
+				fmt.Printf("Uso CPU promedio: %.1f%% (Min: %.1f%%, Max: %.1f%%)\n",
+					report.Stats.Average, report.Stats.Min, report.Stats.Max)
+				if report.Stats.TemperatureAvg > 0 {
+					fmt.Printf("Temperatura promedio: %.1f°C\n", report.Stats.TemperatureAvg)
+				}
+				if report.Stats.Duration > 0 {
+					fmt.Printf("Duración: %v\n", report.Stats.Duration)
+				}
+			}
+			fmt.Println()
+		}
+	}
+
+	// Resumen de RAM
+	if len(sessionResults.RAMResults) > 0 {
+		printSection("BENCHMARKS DE RAM")
+		fmt.Printf("Total ejecutados: %d\n\n", len(sessionResults.RAMResults))
+		for i, result := range sessionResults.RAMResults {
+			fmt.Printf("--- Ejecución %d ---\n", i+1)
+			fmt.Printf("Fecha: %s\n", result.Timestamp.Format("2006-01-02 15:04:05"))
+			fmt.Printf("Tamaño de bloque: %s\n", formatBytes(result.BlockSize))
+			fmt.Printf("Iteraciones: %d | Duración: %v\n", result.TotalIterations, result.TotalDuration)
+			fmt.Printf("Escritura: %.2f GB/s (%.2f MB/s)\n", result.SequentialWriteGBs, result.SequentialWriteMBs)
+			fmt.Printf("Lectura: %.2f GB/s (%.2f MB/s)\n", result.SequentialReadGBs, result.SequentialReadMBs)
+			fmt.Printf("Copia: %.2f GB/s (%.2f MB/s)\n", result.CopyGBs, result.CopyMBs)
+			fmt.Printf("Latencia: %.2f ns\n", result.LatencyNs)
+			if result.FrequencyMHz > 0 {
+				fmt.Printf("Frecuencia RAM: %d MHz\n", result.FrequencyMHz)
+			}
+			if result.MemoryChannels > 0 {
+				fmt.Printf("Canales de memoria: %d\n", result.MemoryChannels)
+			}
+			fmt.Println()
+		}
+	}
+
+	// Resumen de Disco
+	if len(sessionResults.DiskResults) > 0 {
+		printSection("BENCHMARKS DE DISCO")
+		fmt.Printf("Total ejecutados: %d\n\n", len(sessionResults.DiskResults))
+		for i, result := range sessionResults.DiskResults {
+			fmt.Printf("--- Ejecución %d ---\n", i+1)
+			fmt.Printf("Fecha: %s\n", result.Start.Format("2006-01-02 15:04:05"))
+			fmt.Printf("Escritura: %.2f MB/s (%.0f bytes en %v)\n",
+				result.WriteThroughputMBs, float64(result.WrittenBytes), result.WrittenDuration)
+			fmt.Printf("Lectura: %.2f MB/s (%.0f bytes en %v)\n",
+				result.ReadThroughputMBs, float64(result.ReadBytes), result.ReadDuration)
+			if result.SustainedThroughputMBs > 0 {
+				fmt.Printf("Throughput sostenido: %.2f MB/s\n", result.SustainedThroughputMBs)
+			}
+			if result.IOOperations > 0 && result.IODuration > 0 {
+				iops := float64(result.IOOperations) / result.IODuration.Seconds()
+				fmt.Printf("IOPS: %.0f\n", iops)
+			}
+			if result.CPUAverageUsage > 0 {
+				fmt.Printf("Uso CPU promedio: %.1f%%\n", result.CPUAverageUsage)
+			}
+			fmt.Println()
+		}
+	}
+
+	printSection("ESTADÍSTICAS GENERALES")
+	fmt.Printf("Benchmarks CPU: %d\n", len(sessionResults.CPUResults))
+	fmt.Printf("Benchmarks RAM: %d\n", len(sessionResults.RAMResults))
+	fmt.Printf("Benchmarks Disco: %d\n", len(sessionResults.DiskResults))
+	fmt.Printf("Tiempo total de sesión: %v\n", time.Since(sessionResults.SessionStart))
+}
+
 func main() {
 	printHeader("SURTUR FORGE - BENCHMARK")
 	fmt.Printf("Fecha: %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
@@ -456,12 +599,13 @@ func main() {
 		"3": handleRAMStressMenu,
 		"4": displaySystemInfo,
 		"5": displayBaseline,
+		"6": displayBenchmarkSummary,
 	}
 	for {
-		fmt.Printf("\n%s\n1. Benchmarks CPU\n2. Test Disco\n3. Test RAM\n4. Info Sistema\n5. Baseline\n6. Salir\n\nOpción: ", strings.Repeat("-", 40))
+		fmt.Printf("\n%s\n1. Benchmarks CPU\n2. Test Disco\n3. Test RAM\n4. Info Sistema\n5. Baseline\n6. Resumen de Benchmarks\n7. Salir\n\nOpción: ", strings.Repeat("-", 40))
 		var choice string
 		fmt.Scanln(&choice)
-		if choice == "6" {
+		if choice == "7" {
 			fmt.Println("\nSaliendo...")
 			os.Exit(0)
 		}

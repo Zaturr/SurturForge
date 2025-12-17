@@ -53,6 +53,18 @@ type RAMBenchmarkResult struct {
 	DataIntegrityOK    bool
 	Iterations         []BenchmarkIterationResult
 	Timestamp          time.Time
+
+	// Estadísticas extendidas
+	WriteStats               ExtendedStats
+	ReadStats                ExtendedStats
+	CopyStats                ExtendedStats
+	LatencyStats             ExtendedStats
+	WriteTemporalStability   TemporalStability
+	ReadTemporalStability    TemporalStability
+	CopyTemporalStability    TemporalStability
+	LatencyTemporalStability TemporalStability
+	Environment              EnvironmentInfo
+	RunNumber                int
 }
 
 func DefaultRAMBenchmarkConfig() RAMBenchmarkConfig {
@@ -283,6 +295,30 @@ func RunRAMBenchmark(config RAMBenchmarkConfig) (*RAMBenchmarkResult, error) {
 		result.LatencyStdDev = calculateStdDev(latencies)
 	}
 
+	// Obtener información del entorno
+	result.Environment = getEnvironmentInfo()
+
+	// Calcular estadísticas extendidas
+	if len(writeSpeeds) > 0 {
+		result.WriteStats = calculateExtendedStats(writeSpeeds)
+		result.WriteTemporalStability = calculateTemporalStability(writeSpeeds)
+	}
+
+	if len(readSpeeds) > 0 {
+		result.ReadStats = calculateExtendedStats(readSpeeds)
+		result.ReadTemporalStability = calculateTemporalStability(readSpeeds)
+	}
+
+	if len(copySpeeds) > 0 {
+		result.CopyStats = calculateExtendedStats(copySpeeds)
+		result.CopyTemporalStability = calculateTemporalStability(copySpeeds)
+	}
+
+	if len(latencies) > 0 {
+		result.LatencyStats = calculateExtendedStats(latencies)
+		result.LatencyTemporalStability = calculateTemporalStability(latencies)
+	}
+
 	finalMetrics, err := GetRAMMetrics()
 	if err == nil {
 		fmt.Printf("\n=== Verificación Post-Benchmark ===\n")
@@ -310,6 +346,76 @@ func printBenchmarkResult(name string, duration time.Duration, gbPerSec float64)
 
 func RunRAMBenchmarkWithDefault() (*RAMBenchmarkResult, error) {
 	return RunRAMBenchmark(DefaultRAMBenchmarkConfig())
+}
+
+// RunMultipleRAMBenchmarks ejecuta múltiples benchmarks completos
+func RunMultipleRAMBenchmarks(config RAMBenchmarkConfig, numRuns int) ([]*RAMBenchmarkResult, error) {
+	if numRuns < 1 {
+		numRuns = 1
+	}
+
+	results := make([]*RAMBenchmarkResult, 0, numRuns)
+
+	for i := 0; i < numRuns; i++ {
+		fmt.Printf("\n=== Ejecución %d de %d ===\n", i+1, numRuns)
+
+		result, err := RunRAMBenchmark(config)
+		if err != nil {
+			return results, fmt.Errorf("error en ejecución %d: %w", i+1, err)
+		}
+
+		result.RunNumber = i + 1
+		results = append(results, result)
+
+		// Pequeña pausa entre ejecuciones para estabilizar el sistema
+		if i < numRuns-1 {
+			time.Sleep(2 * time.Second)
+		}
+	}
+
+	return results, nil
+}
+
+// AnalyzeMultipleRuns analiza y compara múltiples ejecuciones
+func AnalyzeMultipleRuns(results []*RAMBenchmarkResult) string {
+	if len(results) == 0 {
+		return "No hay resultados para analizar"
+	}
+
+	var output string
+	output += "=== ANÁLISIS DE MÚLTIPLES EJECUCIONES ===\n"
+	output += fmt.Sprintf("Total de ejecuciones: %d\n\n", len(results))
+
+	// Agregar estadísticas de cada ejecución
+	for _, result := range results {
+		output += fmt.Sprintf("--- Ejecución %d ---\n", result.RunNumber)
+		output += FormatBenchmarkResult(result)
+		output += "\n"
+	}
+
+	// Calcular promedios entre ejecuciones
+	if len(results) > 1 {
+		var writeAvgs, readAvgs, copyAvgs, latencyAvgs []float64
+
+		for _, r := range results {
+			writeAvgs = append(writeAvgs, r.SequentialWriteGBs)
+			readAvgs = append(readAvgs, r.SequentialReadGBs)
+			copyAvgs = append(copyAvgs, r.CopyGBs)
+			latencyAvgs = append(latencyAvgs, r.LatencyNs)
+		}
+
+		output += "=== RESUMEN ENTRE EJECUCIONES ===\n"
+		output += fmt.Sprintf("READ - Promedio: %.2f GB/s, StdDev: %.2f GB/s\n",
+			calculateAverage(readAvgs), calculateStdDev(readAvgs))
+		output += fmt.Sprintf("WRITE - Promedio: %.2f GB/s, StdDev: %.2f GB/s\n",
+			calculateAverage(writeAvgs), calculateStdDev(writeAvgs))
+		output += fmt.Sprintf("COPY - Promedio: %.2f GB/s, StdDev: %.2f GB/s\n",
+			calculateAverage(copyAvgs), calculateStdDev(copyAvgs))
+		output += fmt.Sprintf("LATENCY - Promedio: %.2f ns, StdDev: %.2f ns\n",
+			calculateAverage(latencyAvgs), calculateStdDev(latencyAvgs))
+	}
+
+	return output
 }
 
 func calculateAverage(values []float64) float64 {
@@ -382,6 +488,24 @@ func FormatBenchmarkResult(result *RAMBenchmarkResult) string {
 	if result.MemoryChannels > 0 {
 		output += fmt.Sprintf("Canales de Memoria (Channels): %d\n", result.MemoryChannels)
 	}
+
+	// Información del entorno
+	if result.Environment.GoVersion != "" {
+		output += "\n=== INFORMACIÓN DEL ENTORNO ===\n"
+		output += fmt.Sprintf("  Versión de Go: %s\n", result.Environment.GoVersion)
+		output += fmt.Sprintf("  Sistema Operativo: %s\n", result.Environment.OS)
+		output += fmt.Sprintf("  Arquitectura: %s\n", result.Environment.Arch)
+		output += fmt.Sprintf("  Núcleos de CPU: %d\n", result.Environment.CPUCores)
+		if result.Environment.SystemLoadAvg > 0 {
+			output += fmt.Sprintf("  Carga del sistema: %.2f\n", result.Environment.SystemLoadAvg)
+		}
+		output += fmt.Sprintf("  Carga de memoria: %.1f%%\n", result.Environment.MemoryLoad)
+		if result.Environment.CPUUsageBefore > 0 {
+			output += fmt.Sprintf("  Uso de CPU antes: %.1f%%\n", result.Environment.CPUUsageBefore)
+		}
+		output += "\n"
+	}
+
 	output += "\n"
 
 	if result.DataIntegrityOK {
@@ -407,6 +531,22 @@ func FormatBenchmarkResult(result *RAMBenchmarkResult) string {
 			output += "   Rendimiento variable (puede indicar interferencia del sistema)\n"
 		}
 	}
+
+	// Estadísticas extendidas de lectura
+	if result.ReadStats.Median > 0 {
+		output += "=== READ SPEED - ESTADÍSTICAS EXTENDIDAS ===\n"
+		output += fmt.Sprintf("  Mediana (P50):   %.2f GB/s\n", result.ReadStats.Median)
+		output += fmt.Sprintf("  Percentil 95:    %.2f GB/s\n", result.ReadStats.P95)
+		output += fmt.Sprintf("  Percentil 99:    %.2f GB/s\n", result.ReadStats.P99)
+		output += fmt.Sprintf("  IQR:             %.2f GB/s\n", result.ReadStats.IQR)
+		output += fmt.Sprintf("  IC 95%%:          [%.2f, %.2f] GB/s\n",
+			result.ReadStats.CI95Lower, result.ReadStats.CI95Upper)
+		if len(result.ReadStats.Outliers) > 0 {
+			output += fmt.Sprintf("  Outliers:        Iteraciones %v\n", result.ReadStats.Outliers)
+		}
+		output += "\n"
+	}
+
 	output += "\n"
 
 	output += "=== WRITE SPEED (Velocidad de Escritura) ===\n"
@@ -425,6 +565,22 @@ func FormatBenchmarkResult(result *RAMBenchmarkResult) string {
 			output += "   Rendimiento variable (puede indicar interferencia del sistema)\n"
 		}
 	}
+
+	// Estadísticas extendidas de escritura
+	if result.WriteStats.Median > 0 {
+		output += "=== WRITE SPEED - ESTADÍSTICAS EXTENDIDAS ===\n"
+		output += fmt.Sprintf("  Mediana (P50):   %.2f GB/s\n", result.WriteStats.Median)
+		output += fmt.Sprintf("  Percentil 95:    %.2f GB/s\n", result.WriteStats.P95)
+		output += fmt.Sprintf("  Percentil 99:    %.2f GB/s\n", result.WriteStats.P99)
+		output += fmt.Sprintf("  IQR:             %.2f GB/s\n", result.WriteStats.IQR)
+		output += fmt.Sprintf("  IC 95%%:          [%.2f, %.2f] GB/s\n",
+			result.WriteStats.CI95Lower, result.WriteStats.CI95Upper)
+		if len(result.WriteStats.Outliers) > 0 {
+			output += fmt.Sprintf("  Outliers:        Iteraciones %v\n", result.WriteStats.Outliers)
+		}
+		output += "\n"
+	}
+
 	output += "\n"
 
 	output += "=== COPY SPEED (Velocidad de Copia) ===\n"
@@ -452,6 +608,55 @@ func FormatBenchmarkResult(result *RAMBenchmarkResult) string {
 		output += "  No disponible\n"
 	}
 	output += "\n"
+
+	// Estadísticas extendidas de copia
+	if result.CopyStats.Median > 0 {
+		output += "=== COPY SPEED - ESTADÍSTICAS EXTENDIDAS ===\n"
+		output += fmt.Sprintf("  Mediana (P50):   %.2f GB/s\n", result.CopyStats.Median)
+		output += fmt.Sprintf("  Percentil 95:    %.2f GB/s\n", result.CopyStats.P95)
+		output += fmt.Sprintf("  Percentil 99:    %.2f GB/s\n", result.CopyStats.P99)
+		output += fmt.Sprintf("  IQR:             %.2f GB/s\n", result.CopyStats.IQR)
+		output += fmt.Sprintf("  IC 95%%:          [%.2f, %.2f] GB/s\n",
+			result.CopyStats.CI95Lower, result.CopyStats.CI95Upper)
+		if len(result.CopyStats.Outliers) > 0 {
+			output += fmt.Sprintf("  Outliers:        Iteraciones %v\n", result.CopyStats.Outliers)
+		}
+		output += "\n"
+	}
+
+	// Estadísticas extendidas de latencia
+	if result.LatencyStats.Median > 0 {
+		output += "=== LATENCY - ESTADÍSTICAS EXTENDIDAS ===\n"
+		output += fmt.Sprintf("  Mediana (P50):   %.2f ns\n", result.LatencyStats.Median)
+		output += fmt.Sprintf("  Percentil 95:    %.2f ns\n", result.LatencyStats.P95)
+		output += fmt.Sprintf("  Percentil 99:    %.2f ns\n", result.LatencyStats.P99)
+		output += fmt.Sprintf("  IQR:             %.2f ns\n", result.LatencyStats.IQR)
+		output += fmt.Sprintf("  IC 95%%:          [%.2f, %.2f] ns\n",
+			result.LatencyStats.CI95Lower, result.LatencyStats.CI95Upper)
+		if len(result.LatencyStats.Outliers) > 0 {
+			output += fmt.Sprintf("  Outliers:        Iteraciones %v\n", result.LatencyStats.Outliers)
+		}
+		output += "\n"
+	}
+
+	// Estabilidad temporal
+	if result.ReadTemporalStability.StabilityScore > 0 {
+		output += "=== ESTABILIDAD TEMPORAL ===\n"
+		output += fmt.Sprintf("    Primera mitad:  %.2f GB/s\n", result.ReadTemporalStability.FirstHalfAvg)
+		output += fmt.Sprintf("    Segunda mitad:  %.2f GB/s\n", result.ReadTemporalStability.SecondHalfAvg)
+		output += fmt.Sprintf("    Tendencia:      %.4f (positiva = mejora)\n", result.ReadTemporalStability.TrendSlope)
+		output += fmt.Sprintf("    Fuerza:         %.2f%%\n", result.ReadTemporalStability.TrendStrength*100)
+		output += fmt.Sprintf("    Score:          %.1f/100\n", result.ReadTemporalStability.StabilityScore)
+
+		if result.WriteTemporalStability.StabilityScore > 0 {
+			output += "  WRITE:\n"
+			output += fmt.Sprintf("    Primera mitad:  %.2f GB/s\n", result.WriteTemporalStability.FirstHalfAvg)
+			output += fmt.Sprintf("    Segunda mitad:  %.2f GB/s\n", result.WriteTemporalStability.SecondHalfAvg)
+			output += fmt.Sprintf("    Tendencia:      %.4f\n", result.WriteTemporalStability.TrendSlope)
+			output += fmt.Sprintf("    Score:          %.1f/100\n", result.WriteTemporalStability.StabilityScore)
+		}
+		output += "\n"
+	}
 
 	if !result.DataIntegrityOK || result.TotalIterations <= 5 {
 		output += "=== DETALLE POR ITERACIÓN ===\n"

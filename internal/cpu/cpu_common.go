@@ -294,7 +294,7 @@ func DisplayReport(report *BenchmarkReport, printHeader, printSection func(strin
 			fmt.Printf(" | Sin baseline: %.1f%%", report.Stats.Average)
 		}
 		fmt.Println()
-		fmt.Printf("Muestras: %d\n", report.Stats.Samples)
+		fmt.Printf("Muestras: %d (mediciones de uso de CPU tomadas cada 100ms durante el benchmark)\n", report.Stats.Samples)
 
 		if report.Stats.Average < 30 {
 			fmt.Printf("CPU con bajo uso durante el benchmark\n")
@@ -317,11 +317,11 @@ func DisplayReport(report *BenchmarkReport, printHeader, printSection func(strin
 			report.Stats.EndTime.Format("15:04:05"))
 	}
 
-	printSection("Explicación")
-	fmt.Println("• Tiempo/Op: Tiempo promedio por operación (menor = mejor)")
-	fmt.Println("• Iteraciones: Número de veces que se ejecutó el benchmark")
-	fmt.Println("• Mejora Multi-Core: Factor de mejora usando múltiples cores")
-	fmt.Println("• CPU: Uso del procesador durante la ejecución del benchmark")
-	fmt.Println("• Puntuaciones Sintéticas: Basadas en rendimiento de benchmarks (mayor = mejor)")
-	fmt.Println("• Consumo Energético: Estimado basado en uso, frecuencia y temperatura")
+	//printSection("Explicación")
+	//fmt.Println("• Tiempo/Op: Tiempo promedio por operación (menor = mejor)")
+	//fmt.Println("• Iteraciones: Número de veces que se ejecutó el benchmark")
+	//fmt.Println("• Mejora Multi-Core: Factor de mejora usando múltiples cores")
+	//fmt.Println("• CPU: Uso del procesador durante la ejecución del benchmark")
+	//fmt.Println("• Puntuaciones Sintéticas: Basadas en rendimiento de benchmarks (mayor = mejor)")
+	//fmt.Println("• Consumo Energético: Estimado basado en uso, frecuencia y temperatura")
 }
