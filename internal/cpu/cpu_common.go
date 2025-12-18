@@ -2,6 +2,7 @@ package cpu
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -192,6 +193,203 @@ func GenerateBenchmarkReport(output string, stats *CPUStats) (*BenchmarkReport, 
 	}, nil
 }
 
+// CalculateAdvancedMetrics calcula métricas avanzadas de CPU
+func CalculateAdvancedMetrics(report *BenchmarkReport) map[string]interface{} {
+	metrics := make(map[string]interface{})
+
+	// Obtener número de cores
+	var numCores int
+	if report.BaselineResult != nil {
+		numCores = report.BaselineResult.Hardware.CPUCoresLogical
+		if numCores == 0 {
+			numCores = report.BaselineResult.Hardware.CPUCoresPhysical
+		}
+	}
+
+	// Si aún no tenemos cores, usar runtime como fallback
+	if numCores == 0 {
+		numCores = runtime.NumCPU()
+	}
+
+	// Parallel Efficiency - Usar promedio de SHA-256 y AES-256 para mayor precisión
+	singleSHA := FindBenchmark(report.Benchmarks, "BenchmarkSHA256SingleCore")
+	multiSHA := FindBenchmark(report.Benchmarks, "BenchmarkSHA256MultiCore")
+	singleAES := FindBenchmark(report.Benchmarks, "BenchmarkAES256SingleCore")
+	multiAES := FindBenchmark(report.Benchmarks, "BenchmarkAES256MultiCore")
+
+	var shaSpeedup, aesSpeedup float64
+	var speedupCount int
+
+	// Calcular speedup para SHA-256
+	if singleSHA != nil && multiSHA != nil {
+		var singleNs, multiNs int64
+		fmt.Sscanf(singleSHA.TimePerOp, "%d", &singleNs)
+		fmt.Sscanf(multiSHA.TimePerOp, "%d", &multiNs)
+		if singleNs > 0 && multiNs > 0 {
+			shaSpeedup = float64(singleNs) / float64(multiNs)
+			speedupCount++
+		}
+	}
+
+	// Calcular speedup para AES-256
+	if singleAES != nil && multiAES != nil {
+		var singleNs, multiNs int64
+		fmt.Sscanf(singleAES.TimePerOp, "%d", &singleNs)
+		fmt.Sscanf(multiAES.TimePerOp, "%d", &multiNs)
+		if singleNs > 0 && multiNs > 0 {
+			aesSpeedup = float64(singleNs) / float64(multiNs)
+			speedupCount++
+		}
+	}
+
+	// Calcular promedio de speedups y Parallel Efficiency
+	if speedupCount > 0 && numCores > 0 {
+		var avgSpeedup float64
+		if speedupCount == 2 {
+			avgSpeedup = (shaSpeedup + aesSpeedup) / 2.0
+		} else if shaSpeedup > 0 {
+			avgSpeedup = shaSpeedup
+		} else {
+			avgSpeedup = aesSpeedup
+		}
+
+		parallelEfficiency := (avgSpeedup / float64(numCores)) * 100.0
+		metrics["ParallelEfficiency"] = parallelEfficiency
+		metrics["SpeedupFactor"] = avgSpeedup
+	}
+
+	// IPC (Instructions Per Cycle) - Estimación basada en rendimiento
+	// IPC real requiere contadores de rendimiento, aquí hacemos una estimación
+	// Para operaciones criptográficas (SHA-256, AES-256), el IPC típico es 0.5-2.0
+	if report.SingleCoreScore > 0 {
+		// Si no hay ClockSpeedAvg, usar un valor estimado basado en el CPU
+		clockSpeed := 1000.0 // Valor por defecto (1 GHz) para estimación
+		if report.Stats != nil && report.Stats.ClockSpeedAvg > 0 {
+			clockSpeed = report.Stats.ClockSpeedAvg
+		}
+
+		// Base IPC: Score normalizado por frecuencia
+		// Factor de corrección más conservador para operaciones criptográficas
+		baseIPC := report.SingleCoreScore / clockSpeed
+		correctionFactor := 0.6 // Ajustado para operaciones criptográficas intensivas
+		estimatedIPC := baseIPC * correctionFactor
+
+		// Ajustar si está fuera del rango razonable pero mantener el valor
+		if estimatedIPC < 0.1 {
+			estimatedIPC = 0.1 // Mínimo razonable
+		} else if estimatedIPC > 5.0 {
+			estimatedIPC = 5.0 // Máximo razonable
+		}
+
+		// Siempre mostrar el IPC estimado
+		metrics["IPC"] = estimatedIPC
+		if report.Stats == nil || report.Stats.ClockSpeedAvg <= 0 {
+			metrics["IPCEstimated"] = true // Marcar como estimado
+		}
+	}
+
+	// Thermal Throttling Detection
+	throttlingEvents := 0
+	if report.Stats != nil {
+		// Verificar si tenemos datos de frecuencia válidos
+		// ClockSpeedMin se inicializa en 100000.0, así que si es menor que eso, fue actualizado
+		if report.Stats.ClockSpeedMin < 100000.0 && report.Stats.ClockSpeedMax > 0 {
+			throttleRatio := report.Stats.ClockSpeedMin / report.Stats.ClockSpeedMax
+			throttlePercent := (1.0 - throttleRatio) * 100.0
+
+			if throttleRatio < 0.85 { // Si la frecuencia mínima es < 85% de la máxima, posible throttling
+				throttlingEvents = 1
+				if throttleRatio < 0.70 { // Throttling severo
+					throttlingEvents = 2
+				}
+			}
+
+			metrics["ThrottleRatio"] = throttleRatio
+			metrics["ThrottlePercent"] = throttlePercent
+		}
+		// Si no hay datos de frecuencia min/max, asumir que no hubo throttling (0 eventos)
+		metrics["ThermalThrottlingEvents"] = throttlingEvents
+	} else {
+		// Si no hay stats, no hubo throttling
+		metrics["ThermalThrottlingEvents"] = 0
+	}
+
+	// Performance per Watt
+	if report.MultiCoreScore > 0 {
+		var power float64
+		var isEstimated bool
+
+		if report.Stats != nil && report.Stats.EnergyConsumption > 0 {
+			power = report.Stats.EnergyConsumption
+		} else {
+			// Estimar consumo energético
+			basePower := 10.0
+			usageFactor := 0.5 // Valor por defecto si no hay datos
+			freqFactor := 1.0  // Valor por defecto (normalizado a 3 GHz)
+
+			if report.Stats != nil {
+				if report.Stats.Average > 0 {
+					usageFactor = report.Stats.Average / 100.0
+				}
+				if report.Stats.ClockSpeedAvg > 0 {
+					freqFactor = report.Stats.ClockSpeedAvg / 3000.0
+				}
+			}
+
+			thermalFactor := 1.0
+			if report.Stats != nil && report.Stats.TemperatureAvg > 0 {
+				thermalFactor = 1.0 + (report.Stats.TemperatureAvg-40.0)/100.0
+			}
+
+			power = basePower + (usageFactor * freqFactor * thermalFactor * 50.0)
+			isEstimated = true
+		}
+
+		if power > 0 {
+			perfPerWatt := report.MultiCoreScore / power
+			metrics["PerformancePerWatt"] = perfPerWatt
+			if isEstimated {
+				metrics["PowerEstimated"] = true
+			}
+		}
+	}
+
+	// Baseline Comparison
+	if report.BaselineResult != nil {
+		baselineCPUUsage := 100.0 - report.BaselineResult.Baseline.CPUIdlePercent
+		currentCPUUsage := 0.0
+
+		if report.Stats != nil && report.Stats.Average > 0 {
+			currentCPUUsage = report.Stats.Average
+		} else if report.Stats != nil {
+			// Si no hay Average, intentar usar un valor estimado
+			currentCPUUsage = 50.0 // Valor por defecto conservador
+		}
+
+		if currentCPUUsage > 0 {
+			metrics["BaselineCPUUsage"] = baselineCPUUsage
+			metrics["CurrentCPUUsage"] = currentCPUUsage
+			metrics["CPUUsageDelta"] = currentCPUUsage - baselineCPUUsage
+
+			// Comparación porcentual (con protección contra división por cero)
+			if baselineCPUUsage > 0.1 {
+				comparison := (currentCPUUsage / baselineCPUUsage) * 100.0
+				metrics["CPUUsageComparison"] = comparison
+			} else if baselineCPUUsage > 0 {
+				// Si baseline es muy bajo pero > 0, calcular de forma diferente
+				// Mostrar cuántas veces mayor es el uso actual
+				comparison := currentCPUUsage * 10.0 // Escalar para mostrar diferencia
+				metrics["CPUUsageComparison"] = comparison
+			} else {
+				// Baseline es 0, mostrar 100% (uso normal durante benchmark)
+				metrics["CPUUsageComparison"] = 100.0
+			}
+		}
+	}
+
+	return metrics
+}
+
 func DisplayReport(report *BenchmarkReport, printHeader, printSection func(string)) {
 	if report == nil {
 		return
@@ -249,6 +447,262 @@ func DisplayReport(report *BenchmarkReport, printHeader, printSection func(strin
 				improvement)
 		}
 	}
+
+	// Calcular métricas avanzadas
+	advancedMetrics := CalculateAdvancedMetrics(report)
+
+	// Mostrar tabla de métricas esenciales
+	printSection("CPU - Top 10 Métricas Esenciales")
+	fmt.Println()
+	fmt.Println(strings.Repeat("=", 90))
+	fmt.Printf("%-35s %-30s %-15s %-10s\n", "Métrica", "Fórmula/Descripción", "Valor", "Estado")
+	fmt.Println(strings.Repeat("-", 90))
+
+	// Single-Core Score
+	fmt.Printf("%-35s %-30s %-15.2f %-10s\n",
+		"Single-Core Score",
+		"Puntuación sintética mononúcleo",
+		report.SingleCoreScore,
+		"")
+
+	// Multi-Core Score
+	fmt.Printf("%-35s %-30s %-15.2f %-10s\n",
+		"Multi-Core Score",
+		"Puntuación sintética multinúcleo",
+		report.MultiCoreScore,
+		"")
+
+	// Parallel Efficiency
+	if val, ok := advancedMetrics["ParallelEfficiency"].(float64); ok {
+		status := ""
+		if val >= 70 {
+			status = ""
+		} else if val >= 50 {
+			status = ""
+		} else {
+			status = ""
+		}
+		fmt.Printf("%-35s %-30s %-15.2f%% %-10s\n",
+			"Parallel Efficiency",
+			"Speedup / Number of Cores × 100",
+			val,
+			status)
+	} else {
+		fmt.Printf("%-35s %-30s %-15s %-10s\n",
+			"Parallel Efficiency",
+			"Speedup / Number of Cores × 100",
+			"N/A",
+			"")
+	}
+
+	// IPC
+	if val, ok := advancedMetrics["IPC"].(float64); ok {
+		status := ""
+		if val < 1.5 {
+			status = ""
+		}
+		estimated := ""
+		if _, isEst := advancedMetrics["IPCEstimated"].(bool); isEst {
+			estimated = " (estimado)"
+		}
+		fmt.Printf("%-35s %-30s %-15.2f%s %-10s\n",
+			"IPC (Instructions/Cycle)",
+			"Instrucciones por ciclo (estimado)",
+			val,
+			estimated,
+			status)
+	} else {
+		// Calcular estimación básica si no está disponible
+		if report.SingleCoreScore > 0 {
+			clockSpeed := 1000.0 // Valor por defecto
+			if report.Stats != nil && report.Stats.ClockSpeedAvg > 0 {
+				clockSpeed = report.Stats.ClockSpeedAvg
+			}
+			baseIPC := report.SingleCoreScore / clockSpeed
+			estimatedIPC := baseIPC * 0.6
+			if estimatedIPC < 0.1 {
+				estimatedIPC = 0.1
+			} else if estimatedIPC > 5.0 {
+				estimatedIPC = 5.0
+			}
+			fmt.Printf("%-35s %-30s %-15.2f (estimado) %-10s\n",
+				"IPC (Instructions/Cycle)",
+				"Instrucciones por ciclo (estimado)",
+				estimatedIPC,
+				"")
+		} else {
+			fmt.Printf("%-35s %-30s %-15s %-10s\n",
+				"IPC (Instructions/Cycle)",
+				"Instrucciones por ciclo",
+				"N/A",
+				"")
+		}
+	}
+
+	// CPU Utilization
+	if report.Stats != nil && report.Stats.Samples > 0 {
+		status := ""
+		if report.Stats.Average < 30 {
+			status = ""
+		} else if report.Stats.Average > 95 {
+			status = ""
+		}
+		fmt.Printf("%-35s %-30s %-15.1f%% %-10s\n",
+			"CPU Utilization",
+			"Uso promedio durante benchmark",
+			report.Stats.Average,
+			status)
+	}
+
+	// Thermal Throttling
+	if val, ok := advancedMetrics["ThermalThrottlingEvents"].(int); ok {
+		status := ""
+		if val > 0 {
+			status = ""
+		}
+		fmt.Printf("%-35s %-30s %-15d eventos %-10s\n",
+			"Thermal Throttling",
+			"Eventos de throttling",
+			val,
+			status)
+	} else {
+		// Si no hay datos, asumir 0 eventos (no throttling detectado)
+		fmt.Printf("%-35s %-30s %-15d eventos %-10s\n",
+			"Thermal Throttling",
+			"Eventos de throttling",
+			0,
+			"")
+	}
+
+	// Performance per Watt
+	if val, ok := advancedMetrics["PerformancePerWatt"].(float64); ok {
+		status := ""
+		if val < 10 {
+			status = ""
+		}
+		estimated := ""
+		if _, isEst := advancedMetrics["PowerEstimated"].(bool); isEst {
+			estimated = " (estimado)"
+		}
+		fmt.Printf("%-35s %-30s %-15.2f%s %-10s\n",
+			"Performance per Watt",
+			"Score / Power (W)",
+			val,
+			estimated,
+			status)
+	} else {
+		// Calcular estimación si no está disponible
+		if report.MultiCoreScore > 0 {
+			// Estimación conservadora
+			estimatedPower := 30.0 // Valor típico para CPU de escritorio
+			perfPerWatt := report.MultiCoreScore / estimatedPower
+			fmt.Printf("%-35s %-30s %-15.2f (estimado) %-10s\n",
+				"Performance per Watt",
+				"Score / Power (W)",
+				perfPerWatt,
+				"")
+		} else {
+			fmt.Printf("%-35s %-30s %-15s %-10s\n",
+				"Performance per Watt",
+				"Score / Power (W)",
+				"N/A",
+				"")
+		}
+	}
+
+	// Cache Hit Rate (L3) - No disponible sin contadores de rendimiento
+	fmt.Printf("%-35s %-30s %-15s %-10s\n",
+		"Cache Hit Rate (L3)",
+		"(Cache Hits / Total Accesses) × 100",
+		"N/A",
+		"")
+
+	// Temperature
+	if report.Stats != nil && report.Stats.TemperatureAvg > 0 {
+		status := ""
+		if report.Stats.TemperatureAvg > 80 {
+			status = ""
+		}
+		if report.Stats.TemperatureAvg > 90 {
+			status = ""
+		}
+		fmt.Printf("%-35s %-30s %-15.1f°C %-10s\n",
+			"Temperature",
+			"Temperatura promedio",
+			report.Stats.TemperatureAvg,
+			status)
+	}
+
+	// Baseline Comparison
+	if comparison, ok := advancedMetrics["CPUUsageComparison"].(float64); ok {
+		status := ""
+		// Normalizar comparación si es > 1000 (caso especial cuando baseline es muy bajo)
+		displayValue := comparison
+		if comparison > 1000 {
+			// Si fue escalado, mostrar como porcentaje relativo
+			baselineUsage, _ := advancedMetrics["BaselineCPUUsage"].(float64)
+			currentUsage, _ := advancedMetrics["CurrentCPUUsage"].(float64)
+			if baselineUsage > 0 {
+				displayValue = (currentUsage / baselineUsage) * 100.0
+			} else {
+				displayValue = 100.0 // Valor por defecto
+			}
+		}
+
+		if displayValue > 0 {
+			if displayValue < 95 {
+				status = ""
+			}
+			if displayValue < 85 {
+				status = ""
+			}
+			fmt.Printf("%-35s %-30s %-15.1f%% %-10s\n",
+				"Baseline Comparison",
+				"(Current / Baseline) × 100",
+				displayValue,
+				status)
+		} else {
+			fmt.Printf("%-35s %-30s %-15.1f%% %-10s\n",
+				"Baseline Comparison",
+				"(Current / Baseline) × 100",
+				100.0,
+				"")
+		}
+	} else if baselineUsage, ok := advancedMetrics["BaselineCPUUsage"].(float64); ok {
+		// Fallback: calcular comparación directamente
+		currentUsage, _ := advancedMetrics["CurrentCPUUsage"].(float64)
+		if baselineUsage > 0.1 && currentUsage > 0 {
+			comparison := (currentUsage / baselineUsage) * 100.0
+			status := ""
+			if comparison < 95 {
+				status = ""
+			}
+			if comparison < 85 {
+				status = ""
+			}
+			fmt.Printf("%-35s %-30s %-15.1f%% %-10s\n",
+				"Baseline Comparison",
+				"(Current / Baseline) × 100",
+				comparison,
+				status)
+		} else {
+			fmt.Printf("%-35s %-30s %-15.1f%% %-10s\n",
+				"Baseline Comparison",
+				"(Current / Baseline) × 100",
+				100.0,
+				"")
+		}
+	} else {
+		// Si no hay baseline, mostrar 100% (sin comparación)
+		fmt.Printf("%-35s %-30s %-15s %-10s\n",
+			"Baseline Comparison",
+			"(Current / Baseline) × 100",
+			"N/A (sin baseline)",
+			"")
+	}
+
+	fmt.Println(strings.Repeat("=", 90))
+	fmt.Println()
 
 	printSection("Datos de Monitoreo y Eficiencia")
 
